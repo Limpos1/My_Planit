@@ -1,0 +1,128 @@
+# -*- coding: utf-8 -*-
+"""
+Anthropic API 호출부.
+- ANTHROPIC_API_KEY 환경변수가 필요하다 (아직 발급 전이면 이 파일은 호출만 안 될 뿐,
+  나머지 파이프라인은 mock 데이터로 테스트 가능하다 -> test_pipeline.py 참고).
+- 사진(vision) 경로는 1차 파싱 후, 같은 이미지로 자기검증(self-verification)을
+  한 번 더 거친다. 채팅에서 사람이 결과와 사진을 대조해 오류를 잡아주던 것을
+  자동화한 것 -> 사용자 개입 없이 정확도를 끌어올리는 목적.
+"""
+import os
+import json
+from anthropic import Anthropic
+
+from prompt import TOC_PARSING_PROMPT
+from postprocess import postprocess_toc_result, safe_json_parse
+
+MODEL_NAME = "claude-sonnet-5"
+
+SELF_VERIFICATION_PROMPT = """방금 네가 이 목차 이미지를 분석해서 아래 JSON을 만들었다.
+
+[1차 결과]
+{first_pass_json}
+
+이미지를 다시 자세히 보고, 특히 다음을 중점적으로 재검토해라:
+1. 각 항목의 startPage가 이미지에 실제로 인쇄된 숫자와 정확히 일치하는가?
+2. 페이지 번호가 챕터/섹션 순서대로 오름차순인가? (뒤 항목이 앞 항목보다 페이지가
+   작거나 같으면 잘못 읽은 것이다)
+3. startPage를 null로 남긴 항목이 있다면, 이미지에서 정말 안 보이는 게 맞는지
+   다시 한번 확인해라 (특히 위아래 항목과 줄이 헷갈렸을 가능성을 의심해라)
+4. 챕터/섹션 제목 자체가 정확한가?
+
+수정할 부분이 있으면 고쳐서, 없으면 그대로 동일한 스키마의 JSON만 다시 출력해라.
+다른 설명, 인사말, 마크다운 코드블록(```) 없이 JSON만 출력한다.
+"""
+
+
+def _get_client() -> Anthropic:
+    api_key = "API_KEY"
+    if not api_key:
+        raise RuntimeError(
+            "ANTHROPIC_API_KEY 환경변수가 설정되어 있지 않습니다. "
+            "console.anthropic.com에서 키를 발급받아 설정해주세요."
+        )
+    return Anthropic(api_key=api_key)
+
+
+def parse_toc_from_text(toc_text: str, total_pages: int | None = None, max_retries: int = 2) -> dict:
+    """PDF에서 추출한 목차 텍스트를 LLM에 넘겨 구조화된 JSON을 얻는다."""
+    client = _get_client()
+    last_error = None
+
+    for attempt in range(max_retries + 1):
+        response = client.messages.create(
+            model=MODEL_NAME,
+            max_tokens=4000,
+            messages=[
+                {"role": "user", "content": TOC_PARSING_PROMPT + "\n\n[입력 목차 텍스트]\n" + toc_text}
+            ],
+        )
+        raw_text = "".join(
+            block.text for block in response.content if getattr(block, "type", "") == "text"
+        )
+        try:
+            return postprocess_toc_result(raw_text, total_pages=total_pages)
+        except Exception as e:  # JSON 파싱 실패 등
+            last_error = e
+            continue
+
+    raise RuntimeError(f"목차 파싱 실패 (재시도 {max_retries}회 소진): {last_error}")
+
+
+def _call_vision_once(client: Anthropic, image_base64: str, media_type: str, prompt_text: str) -> str:
+    """이미지 + 프롬프트로 1회 호출하고 텍스트 응답을 반환하는 내부 헬퍼."""
+    response = client.messages.create(
+        model=MODEL_NAME,
+        max_tokens=4000,
+        messages=[
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "image",
+                        "source": {"type": "base64", "media_type": media_type, "data": image_base64},
+                    },
+                    {"type": "text", "text": prompt_text},
+                ],
+            }
+        ],
+    )
+    return "".join(
+        block.text for block in response.content if getattr(block, "type", "") == "text"
+    )
+
+
+def parse_toc_from_image(image_base64: str, media_type: str = "image/jpeg",
+                          total_pages: int | None = None, max_retries: int = 2,
+                          self_verify: bool = True) -> dict:
+    """
+    목차 사진(base64)을 vision 모델에 넘겨 구조화된 JSON을 얻는다.
+    self_verify=True(기본값)면, 1차 결과를 같은 이미지로 한 번 더 검증/보정한다.
+    이 과정은 전부 자동으로 이루어지며 사용자에게는 노출되지 않는다.
+    """
+    client = _get_client()
+    last_error = None
+
+    for attempt in range(max_retries + 1):
+        try:
+            raw_text = _call_vision_once(client, image_base64, media_type, TOC_PARSING_PROMPT)
+
+            if self_verify:
+                # 1차 결과가 최소한 JSON으로는 파싱되어야 자기검증 프롬프트에 넣을 수 있다.
+                # 여기서 실패하면 자기검증 없이 그대로 두고, 바깥의 재시도 루프에 맡긴다.
+                try:
+                    first_pass_parsed = safe_json_parse(raw_text)
+                    verify_prompt = SELF_VERIFICATION_PROMPT.format(
+                        first_pass_json=json.dumps(first_pass_parsed, ensure_ascii=False, indent=2)
+                    )
+                    verified_text = _call_vision_once(client, image_base64, media_type, verify_prompt)
+                    raw_text = verified_text  # 검증된 결과로 교체
+                except Exception:
+                    pass  # 자기검증 단계 실패 시 1차 결과로 계속 진행 (아래 postprocess에서 최종 판정)
+
+            return postprocess_toc_result(raw_text, total_pages=total_pages)
+        except Exception as e:
+            last_error = e
+            continue
+
+    raise RuntimeError(f"목차 파싱 실패 (재시도 {max_retries}회 소진): {last_error}")
