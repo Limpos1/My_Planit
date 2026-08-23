@@ -23,14 +23,26 @@ SELF_VERIFICATION_PROMPT = """방금 네가 이 목차 이미지를 분석해서
 
 이미지를 다시 자세히 보고, 특히 다음을 중점적으로 재검토해라:
 1. 각 항목의 startPage가 이미지에 실제로 인쇄된 숫자와 정확히 일치하는가?
-2. 페이지 번호가 챕터/섹션 순서대로 오름차순인가? (뒤 항목이 앞 항목보다 페이지가
-   작거나 같으면 잘못 읽은 것이다)
-3. startPage를 null로 남긴 항목이 있다면, 이미지에서 정말 안 보이는 게 맞는지
+2. **가장 흔하고 치명적인 실수: 페이지 번호가 한 칸씩 밀려서 배정되는 것.**
+   각 항목의 제목과 페이지 번호가 실제로 이미지에서 같은 가로줄(행)에
+   있는 게 맞는지 하나씩 손가락으로 짚듯이 확인해라. 예를 들어 항목 A의
+   페이지 번호로 되어 있는 값이 사실 이미지에서는 바로 다음 항목 B의 줄에
+   더 가깝게 인쇄되어 있다면, 그건 밀림 실수다. 이 경우 A, B, C... 전체
+   목록의 페이지 번호를 한 칸씩 앞으로 당겨서 다시 짝지어야 한다.
+2-1. 이미지 안에 대단원/PART 헤더가 2개 이상 있다면 서로 비교해라. 한쪽 헤더에는
+     페이지 번호가 없는데 다른 쪽에는 있다면, 그건 거의 항상 오배정이다 —
+     번호가 있어 보였던 헤더도 번호가 없는 게 맞고, 그 번호는 그 헤더 바로
+     아래 첫 번째 챕터의 것이다.
+3. 페이지 번호가 챕터/섹션 순서대로 오름차순인가? (뒤 항목이 앞 항목보다 페이지가
+   작거나 같으면 잘못 읽은 것이다. 단, 오름차순이라고 해서 안심하지 말 것 —
+   전체가 한 칸씩 밀려도 오름차순 자체는 유지되므로 이 검사만으로는
+   밀림을 걸러낼 수 없다. 반드시 2번처럼 행 단위로 직접 대조해라.)
+4. startPage를 null로 남긴 항목이 있다면, 이미지에서 정말 안 보이는 게 맞는지
    다시 한번 확인해라 (특히 위아래 항목과 줄이 헷갈렸을 가능성을 의심해라)
-4. 챕터/섹션 제목 자체가 정확한가?
+5. 챕터/섹션 제목 자체가 정확한가?
 
-수정할 부분이 있으면 고쳐서, 없으면 그대로 동일한 스키마의 JSON만 다시 출력해라.
-다른 설명, 인사말, 마크다운 코드블록(```) 없이 JSON만 출력한다.
+수정 과정을 짧게 텍스트로 정리해도 되지만, 최종 결과는 반드시 ```json
+코드블록 하나로 감싸서 출력하고, 코드블록 안에는 JSON 외의 텍스트를 넣지 마라.
 """
 
 
@@ -52,7 +64,7 @@ def parse_toc_from_text(toc_text: str, total_pages: int | None = None, max_retri
     for attempt in range(max_retries + 1):
         response = client.messages.create(
             model=MODEL_NAME,
-            max_tokens=4000,
+            max_tokens=8000,
             messages=[
                 {"role": "user", "content": TOC_PARSING_PROMPT + "\n\n[입력 목차 텍스트]\n" + toc_text}
             ],
@@ -73,7 +85,7 @@ def _call_vision_once(client: Anthropic, image_base64: str, media_type: str, pro
     """이미지 + 프롬프트로 1회 호출하고 텍스트 응답을 반환하는 내부 헬퍼."""
     response = client.messages.create(
         model=MODEL_NAME,
-        max_tokens=4000,
+        max_tokens=8000,
         messages=[
             {
                 "role": "user",
@@ -108,17 +120,21 @@ def parse_toc_from_image(image_base64: str, media_type: str = "image/jpeg",
             raw_text = _call_vision_once(client, image_base64, media_type, TOC_PARSING_PROMPT)
 
             if self_verify:
-                # 1차 결과가 최소한 JSON으로는 파싱되어야 자기검증 프롬프트에 넣을 수 있다.
-                # 여기서 실패하면 자기검증 없이 그대로 두고, 바깥의 재시도 루프에 맡긴다.
                 try:
                     first_pass_parsed = safe_json_parse(raw_text)
                     verify_prompt = SELF_VERIFICATION_PROMPT.format(
                         first_pass_json=json.dumps(first_pass_parsed, ensure_ascii=False, indent=2)
                     )
                     verified_text = _call_vision_once(client, image_base64, media_type, verify_prompt)
-                    raw_text = verified_text  # 검증된 결과로 교체
+                    raw_text = verified_text
                 except Exception:
-                    pass  # 자기검증 단계 실패 시 1차 결과로 계속 진행 (아래 postprocess에서 최종 판정)
+                    pass
+
+            # ↓↓↓ 디버그용으로 추가한 부분 ↓↓↓
+            print("=== RAW RESPONSE ===")
+            print(raw_text)
+            print("====================")
+            # ↑↑↑ 여기까지 ↑↑↑
 
             return postprocess_toc_result(raw_text, total_pages=total_pages)
         except Exception as e:
