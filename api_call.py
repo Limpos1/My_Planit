@@ -35,7 +35,7 @@ SELF_VERIFICATION_PROMPT = """방금 네가 이 목차 이미지를 분석해서
 
 
 def _get_client() -> Anthropic:
-    api_key = "API_KEY"
+    api_key = os.environ.get("ANTHROPIC_API_KEY")
     if not api_key:
         raise RuntimeError(
             "ANTHROPIC_API_KEY 환경변수가 설정되어 있지 않습니다. "
