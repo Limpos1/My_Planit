@@ -6,6 +6,8 @@ Anthropic API 호출부.
 - 사진(vision) 경로는 1차 파싱 후, 같은 이미지로 자기검증(self-verification)을
   한 번 더 거친다. 채팅에서 사람이 결과와 사진을 대조해 오류를 잡아주던 것을
   자동화한 것 -> 사용자 개입 없이 정확도를 끌어올리는 목적.
+- 목차 사진은 여러 장(예: 목차 1페이지 사진 + 2페이지 사진)으로 나뉠 수 있어서,
+  parse_toc_from_images()는 여러 장을 한 메시지에 같이 넣어 하나의 목차로 이어 읽게 한다.
 """
 import os
 import json
@@ -29,10 +31,6 @@ SELF_VERIFICATION_PROMPT = """방금 네가 이 목차 이미지를 분석해서
    페이지 번호로 되어 있는 값이 사실 이미지에서는 바로 다음 항목 B의 줄에
    더 가깝게 인쇄되어 있다면, 그건 밀림 실수다. 이 경우 A, B, C... 전체
    목록의 페이지 번호를 한 칸씩 앞으로 당겨서 다시 짝지어야 한다.
-2-1. 이미지 안에 대단원/PART 헤더가 2개 이상 있다면 서로 비교해라. 한쪽 헤더에는
-     페이지 번호가 없는데 다른 쪽에는 있다면, 그건 거의 항상 오배정이다 —
-     번호가 있어 보였던 헤더도 번호가 없는 게 맞고, 그 번호는 그 헤더 바로
-     아래 첫 번째 챕터의 것이다.
 3. 페이지 번호가 챕터/섹션 순서대로 오름차순인가? (뒤 항목이 앞 항목보다 페이지가
    작거나 같으면 잘못 읽은 것이다. 단, 오름차순이라고 해서 안심하지 말 것 —
    전체가 한 칸씩 밀려도 오름차순 자체는 유지되므로 이 검사만으로는
@@ -40,6 +38,8 @@ SELF_VERIFICATION_PROMPT = """방금 네가 이 목차 이미지를 분석해서
 4. startPage를 null로 남긴 항목이 있다면, 이미지에서 정말 안 보이는 게 맞는지
    다시 한번 확인해라 (특히 위아래 항목과 줄이 헷갈렸을 가능성을 의심해라)
 5. 챕터/섹션 제목 자체가 정확한가?
+6. 이미지가 여러 장 주어졌다면, 장 사이의 이어짐(예: 1번째 이미지 마지막 항목
+   다음에 2번째 이미지 첫 항목이 자연스럽게 이어지는지)도 확인해라.
 
 수정 과정을 짧게 텍스트로 정리해도 되지만, 최종 결과는 반드시 ```json
 코드블록 하나로 감싸서 출력하고, 코드블록 안에는 JSON 외의 텍스트를 넣지 마라.
@@ -81,43 +81,47 @@ def parse_toc_from_text(toc_text: str, total_pages: int | None = None, max_retri
     raise RuntimeError(f"목차 파싱 실패 (재시도 {max_retries}회 소진): {last_error}")
 
 
-def _call_vision_once(client: Anthropic, image_base64: str, media_type: str, prompt_text: str) -> str:
-    """이미지 + 프롬프트로 1회 호출하고 텍스트 응답을 반환하는 내부 헬퍼."""
+def _call_vision_once(client: Anthropic, images: list[dict], prompt_text: str) -> str:
+    """
+    이미지 여러 장 + 프롬프트로 1회 호출하고 텍스트 응답을 반환하는 내부 헬퍼.
+    images: [{"data": base64_str, "media_type": "image/jpeg"}, ...] 순서대로
+            한 메시지 안에 같이 담아 보낸다 (여러 장이어도 API 호출은 1번).
+    """
+    content = [
+        {
+            "type": "image",
+            "source": {"type": "base64", "media_type": img["media_type"], "data": img["data"]},
+        }
+        for img in images
+    ]
+    content.append({"type": "text", "text": prompt_text})
+
     response = client.messages.create(
         model=MODEL_NAME,
         max_tokens=8000,
-        messages=[
-            {
-                "role": "user",
-                "content": [
-                    {
-                        "type": "image",
-                        "source": {"type": "base64", "media_type": media_type, "data": image_base64},
-                    },
-                    {"type": "text", "text": prompt_text},
-                ],
-            }
-        ],
+        messages=[{"role": "user", "content": content}],
     )
     return "".join(
         block.text for block in response.content if getattr(block, "type", "") == "text"
     )
 
 
-def parse_toc_from_image(image_base64: str, media_type: str = "image/jpeg",
-                          total_pages: int | None = None, max_retries: int = 2,
-                          self_verify: bool = True) -> dict:
+def parse_toc_from_images(images: list[dict], total_pages: int | None = None,
+                           max_retries: int = 2, self_verify: bool = True) -> dict:
     """
-    목차 사진(base64)을 vision 모델에 넘겨 구조화된 JSON을 얻는다.
-    self_verify=True(기본값)면, 1차 결과를 같은 이미지로 한 번 더 검증/보정한다.
-    이 과정은 전부 자동으로 이루어지며 사용자에게는 노출되지 않는다.
+    목차 사진 한 장 이상(base64 리스트)을 vision 모델에 한 번에 넘겨 구조화된 JSON을 얻는다.
+    images: [{"data": base64_str, "media_type": "image/jpeg"}, ...]
+    - 목차가 여러 장으로 나뉘어 촬영된 경우(예: 1페이지/2페이지 따로 찍음), 프롬프트가
+      이걸 하나의 목차로 이어 붙여 처리하도록 지시한다.
+    - self_verify=True(기본값)면, 1차 결과를 같은 이미지들로 한 번 더 검증/보정한다.
+      이 과정은 전부 자동으로 이루어지며 사용자에게는 노출되지 않는다.
     """
     client = _get_client()
     last_error = None
 
     for attempt in range(max_retries + 1):
         try:
-            raw_text = _call_vision_once(client, image_base64, media_type, TOC_PARSING_PROMPT)
+            raw_text = _call_vision_once(client, images, TOC_PARSING_PROMPT)
 
             if self_verify:
                 try:
@@ -125,16 +129,10 @@ def parse_toc_from_image(image_base64: str, media_type: str = "image/jpeg",
                     verify_prompt = SELF_VERIFICATION_PROMPT.format(
                         first_pass_json=json.dumps(first_pass_parsed, ensure_ascii=False, indent=2)
                     )
-                    verified_text = _call_vision_once(client, image_base64, media_type, verify_prompt)
+                    verified_text = _call_vision_once(client, images, verify_prompt)
                     raw_text = verified_text
                 except Exception:
                     pass
-
-            # ↓↓↓ 디버그용으로 추가한 부분 ↓↓↓
-            print("=== RAW RESPONSE ===")
-            print(raw_text)
-            print("====================")
-            # ↑↑↑ 여기까지 ↑↑↑
 
             return postprocess_toc_result(raw_text, total_pages=total_pages)
         except Exception as e:
@@ -142,3 +140,15 @@ def parse_toc_from_image(image_base64: str, media_type: str = "image/jpeg",
             continue
 
     raise RuntimeError(f"목차 파싱 실패 (재시도 {max_retries}회 소진): {last_error}")
+
+
+def parse_toc_from_image(image_base64: str, media_type: str = "image/jpeg",
+                          total_pages: int | None = None, max_retries: int = 2,
+                          self_verify: bool = True) -> dict:
+    """
+    목차 사진 한 장짜리 버전 (하위 호환용). 내부적으로 parse_toc_from_images를 호출한다.
+    """
+    return parse_toc_from_images(
+        [{"data": image_base64, "media_type": media_type}],
+        total_pages=total_pages, max_retries=max_retries, self_verify=self_verify,
+    )

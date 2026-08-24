@@ -10,9 +10,9 @@ import re
 
 # contentType 2차 검증용 키워드 (문서 6-1절과 동일)
 NON_CONTENT_KEYWORDS = [
-    "머리말", "들어가며", "서문", "저자", "감사의 글", "일러두기",
+    "머리말", "들어가며", "서문", "프롤로그", "에필로그", "저자", "감사의 글", "일러두기",
     "찾아보기", "색인", "참고문헌", "부록",
-    "prologue", "index", "appendix", "preface", "acknowledg",
+    "prologue", "epilogue", "index", "appendix", "preface", "acknowledg",
 ]
 
 
