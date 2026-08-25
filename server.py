@@ -2,17 +2,20 @@
 """
 React 프론트엔드와 연결하기 위한 FastAPI 서버.
 - 로컬 개발용. `uvicorn server:app --reload`로 실행한다.
-- 사진(vision) 파싱(여러 장 업로드 지원)과 PDF 텍스트 파싱을 각각 엔드포인트로 노출한다.
+- 목차 파싱(사진 여러 장/PDF)과 학습 플랜 생성을 각각 엔드포인트로 노출한다.
 """
 import base64
 import tempfile
+from datetime import date, timedelta
 from pathlib import Path
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
 
 from api_call import parse_toc_from_images, parse_toc_from_text
 from pdf_extract import extract_toc_text
+from schedule import generate_study_plan
 
 app = FastAPI(title="Planit TOC Parser")
 
@@ -69,6 +72,49 @@ async def parse_toc_pdf(
         raise HTTPException(status_code=500, detail=str(e))
     finally:
         Path(tmp_path).unlink(missing_ok=True)
+
+    return result
+
+
+class GeneratePlanRequest(BaseModel):
+    """
+    parsedToc: postprocess_toc_result() 형태의 결과. 사용자가 과목 선택 화면에서
+               체크 해제한 챕터는 프론트에서 이미 제외하고 보내는 것을 전제로 한다.
+    startDate/targetDate: 학습 시작일/목표일 (둘 다 포함).
+    weekdayMinutes: {"월": 120, ..., "토": 0, "일": 0} 형태의 요일별 가용 시간(분).
+                    프론트에서 평일/주말 범위를 분으로 환산해 7일치로 채워서 보낸다.
+    checkedDates: 캘린더에서 사용자가 체크한(=학습 가능한) 날짜 목록. 이 목록에
+                  없는, 시작일~목표일 범위 안의 날짜는 전부 제외일로 처리한다.
+    """
+    parsedToc: dict
+    startDate: date
+    targetDate: date
+    weekdayMinutes: dict[str, int]
+    checkedDates: list[date]
+
+
+@app.post("/generate-plan")
+async def generate_plan(req: GeneratePlanRequest):
+    """선택된 챕터 + 기간/시간 설정을 받아 날짜별 학습 플랜을 생성한다."""
+    all_days = []
+    d = req.startDate
+    while d <= req.targetDate:
+        all_days.append(d)
+        d += timedelta(days=1)
+
+    checked_set = set(req.checkedDates)
+    excluded_dates = [d for d in all_days if d not in checked_set]
+
+    try:
+        result = generate_study_plan(
+            req.parsedToc,
+            start_date=req.startDate,
+            target_date=req.targetDate,
+            weekday_minutes=req.weekdayMinutes,
+            excluded_dates=excluded_dates,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
     return result
 

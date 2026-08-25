@@ -1,148 +1,103 @@
 import { useState } from "react";
+import UploadScreen from "./screens/UploadScreen";
+import SelectUnitsScreen from "./screens/SelectUnitsScreen";
+import CalendarScreen from "./screens/CalendarScreen";
+import AvailabilityScreen from "./screens/AvailabilityScreen";
+import GeneratingScreen from "./screens/GeneratingScreen";
+import ResultScreen from "./screens/ResultScreen";
+import { filterParsedToc, rangeMinutes } from "./lib/toc";
 
 const API_BASE = "http://localhost:8000";
+const WEEKDAY_KEYS = ["일", "월", "화", "수", "목", "금", "토"]; // JS Date.getDay(): 0=일
 
-function App() {
-  const [files, setFiles] = useState([]); // 이미지는 여러 장, PDF는 1개만 담김
-  const [fileKind, setFileKind] = useState("image"); // "image" | "pdf"
-  const [totalPages, setTotalPages] = useState("");
-  const [loading, setLoading] = useState(false);
+function buildWeekdayMinutes({ weekdayRange, weekendRange, weekendExcluded }) {
+  const weekdayMinutes = rangeMinutes(weekdayRange);
+  const weekendMinutes = weekendExcluded ? 0 : rangeMinutes(weekendRange);
+  const result = {};
+  WEEKDAY_KEYS.forEach((name, idx) => {
+    const isWeekend = idx === 0 || idx === 6;
+    result[name] = isWeekend ? weekendMinutes : weekdayMinutes;
+  });
+  return result;
+}
+
+export default function App() {
+  const [step, setStep] = useState(1);
+  const [parsedToc, setParsedToc] = useState(null);
+  const [filteredToc, setFilteredToc] = useState(null);
+  const [calendarInfo, setCalendarInfo] = useState(null);
+  const [plan, setPlan] = useState(null);
   const [error, setError] = useState("");
-  const [result, setResult] = useState(null);
 
-  const handleFileChange = (e) => {
-    const selected = Array.from(e.target.files || []);
-    if (selected.length === 0) return;
-
-    const hasPdf = selected.some((f) => f.type === "application/pdf");
-    if (hasPdf) {
-      setFiles([selected[0]]);
-      setFileKind("pdf");
-    } else {
-      setFiles(selected);
-      setFileKind("image");
-    }
-    setResult(null);
+  const restart = () => {
+    setStep(1);
+    setParsedToc(null);
+    setFilteredToc(null);
+    setCalendarInfo(null);
+    setPlan(null);
     setError("");
   };
 
-  const handleUpload = async () => {
-    if (files.length === 0) {
-      setError("파일을 먼저 선택해주세요.");
-      return;
-    }
-    setLoading(true);
+  const handleParsed = (data) => {
+    setParsedToc(data);
+    setStep(2);
+  };
+
+  const handleUnitsSelected = (excludedKeys) => {
+    setFilteredToc(filterParsedToc(parsedToc, excludedKeys));
+    setStep(3);
+  };
+
+  const handleCalendarNext = (info) => {
+    setCalendarInfo(info);
+    setStep(4);
+  };
+
+  const handleAvailabilityNext = async (availability) => {
+    setStep(5);
     setError("");
-    setResult(null);
-
-    const formData = new FormData();
-    if (fileKind === "pdf") {
-      formData.append("file", files[0]);
-    } else {
-      files.forEach((f) => formData.append("files", f));
-    }
-    if (totalPages) {
-      formData.append("total_pages", totalPages);
-    }
-
-    const endpoint = fileKind === "pdf" ? "/parse-toc/pdf" : "/parse-toc/image";
+    const weekdayMinutes = buildWeekdayMinutes(availability);
 
     try {
-      const res = await fetch(`${API_BASE}${endpoint}`, {
+      const res = await fetch(`${API_BASE}/generate-plan`, {
         method: "POST",
-        body: formData,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          parsedToc: filteredToc,
+          startDate: calendarInfo.startDate,
+          targetDate: calendarInfo.targetDate,
+          weekdayMinutes,
+          checkedDates: calendarInfo.checkedDates,
+        }),
       });
       if (!res.ok) {
         const errBody = await res.json().catch(() => ({}));
         throw new Error(errBody.detail || `서버 오류 (${res.status})`);
       }
       const data = await res.json();
-      setResult(data);
+      setPlan(data);
+      setStep(6);
     } catch (e) {
-      setError(e.message || "업로드 중 오류가 발생했습니다.");
-    } finally {
-      setLoading(false);
+      setError(e.message || "플랜 생성 중 오류가 발생했습니다.");
+      setStep(4);
     }
   };
 
   return (
     <div style={{ maxWidth: 720, margin: "40px auto", fontFamily: "sans-serif", padding: "0 16px" }}>
-      <h1>Planit 목차 파싱</h1>
-      <p>
-        책 목차 사진(여러 장 가능) 또는 PDF 파일을 업로드하면 챕터/페이지 목록을 자동으로 추출합니다.
-      </p>
+      <h1>Planit</h1>
+      <p style={{ color: "#888", marginBottom: 24 }}>단계 {Math.min(step, 6)} / 6</p>
 
-      <div style={{ display: "flex", flexDirection: "column", gap: 12, marginBottom: 24 }}>
-        <input type="file" accept="image/*,.pdf" multiple onChange={handleFileChange} />
+      {error && <p style={{ color: "crimson", fontWeight: "bold" }}>{error}</p>}
 
-        {files.length > 0 && (
-          <ul style={{ margin: 0, color: "#555" }}>
-            {files.map((f, i) => (
-              <li key={i}>{f.name}</li>
-            ))}
-          </ul>
-        )}
-        {fileKind === "image" && files.length > 1 && (
-          <p style={{ color: "#888", fontSize: 14, margin: 0 }}>
-            사진 {files.length}장을 하나의 목차로 이어서 분석합니다.
-          </p>
-        )}
-
-        <label>
-          책 전체 페이지 수 (선택, 마지막 챕터 endPage 계산에 사용됨):{" "}
-          <input
-            type="number"
-            value={totalPages}
-            onChange={(e) => setTotalPages(e.target.value)}
-            placeholder="예: 350"
-            style={{ width: 100 }}
-          />
-        </label>
-
-        <button onClick={handleUpload} disabled={loading} style={{ width: 160, padding: "8px 0" }}>
-          {loading ? "분석 중..." : "업로드 및 분석"}
-        </button>
-      </div>
-
-      {error && (
-        <p style={{ color: "crimson", fontWeight: "bold" }}>{error}</p>
+      {step === 1 && <UploadScreen onParsed={handleParsed} />}
+      {step === 2 && (
+        <SelectUnitsScreen parsedToc={parsedToc} onNext={handleUnitsSelected} onBack={() => setStep(1)} />
       )}
-
-      {result && (
-        <div>
-          <h2>파싱 결과</h2>
-          {result.error && <p style={{ color: "crimson" }}>{result.error}</p>}
-          {result.chapters?.map((chapter) => (
-            <div key={chapter.order} style={{ border: "1px solid #ccc", borderRadius: 8, padding: 12, marginBottom: 12 }}>
-              <strong>{chapter.title}</strong>
-              {" "}
-              <span style={{ color: "#888" }}>
-                ({chapter.contentType}
-                {chapter.startPage != null ? `, ${chapter.startPage}p ~ ${chapter.endPage ?? "?"}p` : ""})
-              </span>
-
-              {chapter.subunits?.length > 0 && (
-                <ul>
-                  {chapter.subunits.map((sub) => (
-                    <li key={sub.order}>
-                      {sub.title}
-                      {" "}
-                      {sub.startPage != null && (
-                        <span style={{ color: "#888" }}>
-                          ({sub.startPage}p ~ {sub.endPage ?? "?"}p
-                          {sub.needsFallback && ", 확인 필요"})
-                        </span>
-                      )}
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </div>
-          ))}
-        </div>
-      )}
+      {step === 3 && <CalendarScreen onNext={handleCalendarNext} onBack={() => setStep(2)} />}
+      {step === 4 && <AvailabilityScreen onNext={handleAvailabilityNext} onBack={() => setStep(3)} />}
+      {step === 5 && <GeneratingScreen />}
+      {step === 6 && <ResultScreen plan={plan} onRestart={restart} />}
     </div>
   );
 }
-
-export default App;
