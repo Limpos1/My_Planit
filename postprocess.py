@@ -4,6 +4,11 @@ LLM이 반환한 목차 파싱 결과(JSON)를 받아 후처리한다.
 - endPage는 여기서 계산한다 (LLM에게 산수를 시키지 않는다).
 - NON_CONTENT 키워드 2차 검증으로 LLM 분류 누락을 보정한다.
 - JSON 파싱 실패에 대비한 안전 파서를 제공한다.
+- 책이 여러 권(volume)으로 나뉘어 권마다 페이지 번호가 다시 시작되는 경우,
+  권 경계를 넘어서까지 페이지를 이어 계산하면 endPage가 시작 페이지보다
+  작아지는 등 말이 안 되는 값이 나온다. 그래서 모든 페이지 비교/계산은
+  같은 volume 안에서만 이루어지도록 한다 (volume 필드가 없으면 1로 간주,
+  즉 단일 권 책은 지금까지와 동일하게 동작한다).
 """
 import json
 import re
@@ -30,6 +35,11 @@ def safe_json_parse(raw_text: str) -> dict:
     return json.loads(cleaned)
 
 
+def _volume_of(item: dict) -> int:
+    """volume 필드가 없으면 단일 권 책으로 보고 1을 기본값으로 쓴다."""
+    return item.get("volume", 1)
+
+
 def _flatten_ordered(chapters: list[dict]) -> list[dict]:
     """최상위 챕터들을 order 기준으로 정렬한 리스트를 반환 (subunits는 건드리지 않음)."""
     return sorted(chapters, key=lambda c: c.get("order", 0))
@@ -37,12 +47,18 @@ def _flatten_ordered(chapters: list[dict]) -> list[dict]:
 
 def _find_next_start_page(items: list[dict], from_index: int) -> int | None:
     """
-    from_index 다음부터 startPage가 실제로 존재하는 첫 항목을 찾아 그 값을 반환한다.
+    from_index 다음부터, **같은 volume 안에서** startPage가 실제로 존재하는
+    첫 항목을 찾아 그 값을 반환한다.
     - "첫째마당/둘째마당" 같은 PART 구분자처럼 startPage가 null인 항목은
       끝까지 건너뛰고, 그 뒤에 있는 진짜 다음 챕터의 startPage를 사용한다.
-    - 이렇게 해야 구분자 바로 앞 챕터의 endPage가 null로 끊기지 않는다.
+    - 단, volume이 다른 항목을 만나면 그 순간 탐색을 멈춘다. 권이 바뀌면
+      페이지 번호가 다시 시작되므로, 다른 권의 페이지로 endPage를 계산하면
+      안 되기 때문이다.
     """
+    current_volume = _volume_of(items[from_index])
     for item in items[from_index + 1:]:
+        if _volume_of(item) != current_volume:
+            return None
         if item.get("startPage") is not None:
             return item["startPage"]
     return None
@@ -52,17 +68,20 @@ def _find_next_start_page_across(chapters: list[dict], chapter_index: int, sub_i
     """
     chapters[chapter_index]의 소단원 sub_index 다음부터 startPage를 찾되,
     같은 챕터 안에서 못 찾으면 이후 챕터들(자신의 startPage 또는 그 소단원들)까지
-    이어서 탐색한다.
+    이어서 탐색한다. 단, 여기서도 volume이 바뀌면 그 순간 탐색을 멈춘다.
     - SUBJECT 헤더처럼 챕터 자신은 startPage가 없고 소단원만 페이지를 가지는
       경우에도, 그 챕터의 마지막 소단원 endPage를 다음 챕터(혹은 그 소단원)의
       startPage로 정상적으로 이어 붙이기 위해 필요하다.
     """
+    current_volume = _volume_of(chapters[chapter_index])
     subunits = sorted(chapters[chapter_index].get("subunits", []), key=lambda s: s.get("order", 0))
     for sub in subunits[sub_index + 1:]:
         if sub.get("startPage") is not None:
             return sub["startPage"]
 
     for chapter in chapters[chapter_index + 1:]:
+        if _volume_of(chapter) != current_volume:
+            return None
         if chapter.get("startPage") is not None:
             return chapter["startPage"]
         for sub in sorted(chapter.get("subunits", []), key=lambda s: s.get("order", 0)):
@@ -72,24 +91,46 @@ def _find_next_start_page_across(chapters: list[dict], chapter_index: int, sub_i
     return None
 
 
-def compute_end_pages(parsed: dict, total_pages: int | None = None) -> dict:
+def _resolve_total_pages(total_pages, volume: int, is_last_overall: bool) -> int | None:
+    """
+    마지막 챕터/소단원의 endPage를 채울 때 쓸 "그 권의 전체 페이지 수"를 결정한다.
+    total_pages는 두 가지 형태를 받을 수 있다:
+    - 정수 하나: 단일 권 책(혹은 다권 책의 마지막 권)의 전체 페이지 수.
+      **문서 전체에서 정말로 마지막인 항목에만** 적용한다 (다른 권의 마지막
+      챕터에 잘못 적용되면 엉뚱한 값이 되므로).
+    - {volume: 페이지수} 형태의 dict: 권마다 전체 페이지 수를 알고 있을 때,
+      해당 권의 마지막 항목에 적용한다.
+    둘 다 없거나 해당 권 정보가 없으면 None을 반환해 needsFallback으로 남긴다.
+    """
+    if total_pages is None:
+        return None
+    if isinstance(total_pages, dict):
+        return total_pages.get(volume)
+    return total_pages if is_last_overall else None
+
+
+def compute_end_pages(parsed: dict, total_pages=None) -> dict:
     """
     각 최상위 챕터의 endPage를 '다음에 오는 startPage가 있는 항목의 startPage - 1'로
-    계산해 채워 넣는다.
+    계산해 채워 넣는다. (같은 volume 안에서만 비교/계산한다.)
     - 바로 다음 항목이 PART 구분자 등으로 startPage가 null이면, 그 뒤를 계속 탐색해
       startPage가 있는 항목을 찾는다 (건너뛰기).
-    - 마지막 챕터(뒤에 startPage 있는 항목이 전혀 없는 경우)는 total_pages가 주어지면
-      그 값을, 없으면 None을 사용한다.
+    - 같은 volume 안에서 다음 항목을 못 찾으면(=그 권의 마지막 챕터), total_pages로
+      해당 권의 전체 페이지 수를 알 수 있으면 그 값을, 없으면 None을 사용한다.
     - 챕터 자신의 startPage가 null이면(예: SUBJECT 헤더 자체, PART 구분자 등)
       챕터 자신의 endPage 계산은 건너뛰고 needsFallback 플래그를 세운다.
       다만 이 경우에도 그 아래 소단원(subunits)들은 별도로 페이지를 갖고 있을 수
       있으므로, 소단원 endPage 계산은 챕터 자신의 상태와 무관하게 항상 수행한다.
     - 소단원의 마지막 항목처럼 같은 챕터 안에서 다음 startPage를 못 찾으면,
-      챕터 경계를 넘어 다음 챕터(혹은 그 소단원)의 startPage까지 찾아본다.
+      챕터 경계를 넘어 다음 챕터(혹은 그 소단원)의 startPage까지 찾아본다
+      (단, 같은 volume 안에서만).
     """
     chapters = _flatten_ordered(parsed.get("chapters", []))
 
     for i, chapter in enumerate(chapters):
+        chapter_volume = _volume_of(chapter)
+        is_last_overall = (i == len(chapters) - 1)
+
         if chapter.get("startPage") is None:
             chapter["needsFallback"] = True
             chapter["endPage"] = None
@@ -98,13 +139,15 @@ def compute_end_pages(parsed: dict, total_pages: int | None = None) -> dict:
             next_start = _find_next_start_page(chapters, i)
             if next_start is not None:
                 chapter["endPage"] = next_start - 1
-            elif total_pages is not None:
-                chapter["endPage"] = total_pages
             else:
-                # 뒤에 참조할 페이지도 없고 total_pages도 없는 "진짜 마지막" 케이스
-                # -> null로 남기되, 페이지 정보 부족 상태임을 명시적으로 플래그
-                chapter["endPage"] = None
-                chapter["needsFallback"] = True
+                resolved = _resolve_total_pages(total_pages, chapter_volume, is_last_overall)
+                if resolved is not None:
+                    chapter["endPage"] = resolved
+                else:
+                    # 같은 권 안에서 참조할 다음 페이지도 없고, 그 권의 전체
+                    # 페이지 수도 모르는 "그 권의 진짜 마지막" 케이스
+                    chapter["endPage"] = None
+                    chapter["needsFallback"] = True
 
         # 소단원 endPage는 챕터 자신의 startPage 유무와 무관하게 항상 계산한다.
         subunits = sorted(chapter.get("subunits", []), key=lambda s: s.get("order", 0))
@@ -117,11 +160,14 @@ def compute_end_pages(parsed: dict, total_pages: int | None = None) -> dict:
             sub_next_start = _find_next_start_page_across(chapters, i, j)
             if sub_next_start is not None:
                 sub["endPage"] = sub_next_start - 1
-            elif total_pages is not None:
-                sub["endPage"] = total_pages
             else:
-                sub["endPage"] = None
-                sub["needsFallback"] = True
+                is_last_leaf_overall = is_last_overall and (j == len(subunits) - 1)
+                resolved = _resolve_total_pages(total_pages, chapter_volume, is_last_leaf_overall)
+                if resolved is not None:
+                    sub["endPage"] = resolved
+                else:
+                    sub["endPage"] = None
+                    sub["needsFallback"] = True
         chapter["subunits"] = subunits
 
         # 챕터 자신은 페이지가 없지만 소단원들은 있는 경우(SUBJECT 헤더 등),
@@ -131,6 +177,7 @@ def compute_end_pages(parsed: dict, total_pages: int | None = None) -> dict:
 
     parsed["chapters"] = chapters
     return parsed
+
 
 def _get_leaf_items(parsed: dict) -> list[dict]:
     """
@@ -198,20 +245,29 @@ def apply_non_content_keyword_filter(parsed: dict) -> dict:
 
 def detect_page_order_anomalies(parsed: dict) -> dict:
     """
-    챕터의 startPage가 순서(order)대로 오름차순인지 자동 검증한다.
+    챕터의 startPage가 순서(order)대로 오름차순인지 자동 검증한다. (같은 volume
+    안에서만 비교한다 — 권이 바뀌면 페이지 번호가 다시 시작되는 게 정상이므로,
+    그걸 "역행했다"고 오판하면 안 된다.)
     - 사용자에게 절대 노출하지 않는다. 이 결과는 endPage 계산 전에 실행되어,
       이상치로 판정된 startPage를 null로 무효화한다 (이미 있는 '페이지 정보
       누락' 처리 경로 -> needsFallback/건너뛰기 로직을 그대로 재사용하기 위함).
     - order 기준으로 순회하면서 이전 값보다 작거나 같은 값이 나오면
       "믿을 수 없는 값"으로 보고 startPage를 null로 지운다.
+    - volume이 이전 챕터와 다르면 비교 기준(prev_page)을 리셋한다.
     - 반드시 compute_end_pages보다 먼저 호출해야 한다. 그래야 잘못된 페이지
       번호가 다른 챕터의 endPage 계산까지 오염시키는 것을 막을 수 있다.
     """
     chapters = _flatten_ordered(parsed.get("chapters", []))
     has_anomaly = False
     prev_page = None
+    prev_volume = None
 
     for chapter in chapters:
+        chapter_volume = _volume_of(chapter)
+        if chapter_volume != prev_volume:
+            prev_page = None  # 권이 바뀜 -> 이전 권의 페이지와는 비교하지 않는다
+        prev_volume = chapter_volume
+
         page = chapter.get("startPage")
         if page is None:
             prev_page = None  # 이미 페이지 정보가 없는 항목 -> 기준점 리셋
@@ -226,7 +282,7 @@ def detect_page_order_anomalies(parsed: dict) -> dict:
         chapter["pageOrderAnomaly"] = False
         prev_page = page
 
-        # 소단원도 같은 방식으로 챕터 내부 기준 검사
+        # 소단원도 같은 방식으로 챕터 내부 기준 검사 (소단원은 항상 부모와 같은 volume)
         subunits = sorted(chapter.get("subunits", []), key=lambda s: s.get("order", 0))
         sub_prev = None
         for sub in subunits:
@@ -248,11 +304,15 @@ def detect_page_order_anomalies(parsed: dict) -> dict:
     return parsed
 
 
-def postprocess_toc_result(raw_llm_text: str, total_pages: int | None = None) -> dict:
+def postprocess_toc_result(raw_llm_text: str, total_pages=None) -> dict:
     """
-    파싱 -> 순서 이상치 탐지/제거 -> endPage 계산 -> 키워드 필터 순으로 처리하는 진입점.
+    파싱 -> 순서 이상치 탐지/제거 -> endPage 계산 -> 키워드 필터 -> 추정 페이지 수
+    순으로 처리하는 진입점.
     (이상치 탐지를 endPage 계산보다 먼저 해야, 잘못된 페이지 번호가
      다른 항목의 endPage 계산까지 오염시키지 않는다.)
+
+    total_pages: int(단일 권 혹은 다권 책의 마지막 권 전체 페이지 수) 또는
+                 {volume: 페이지수} 형태의 dict(권마다 아는 만큼).
     """
     parsed = safe_json_parse(raw_llm_text)
     if "error" in parsed:
