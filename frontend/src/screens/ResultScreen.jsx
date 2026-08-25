@@ -1,3 +1,15 @@
+function downloadJson(plan) {
+  const blob = new Blob([JSON.stringify(plan, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "study_plan.json";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
 export default function ResultScreen({ plan, onRestart }) {
   if (!plan) return null;
 
@@ -31,7 +43,13 @@ export default function ResultScreen({ plan, onRestart }) {
               <ul style={{ margin: "6px 0 0" }}>
                 {day.items.map((item, i) => (
                   <li key={i}>
-                    {item.title} — {item.pagesToday}p / {item.totalPages}p ({item.status})
+                    {item.title} — {item.pageRange ? item.pageRange : `${item.pagesToday}p`}
+                    {" "}
+                    <span style={{ color: "#999" }}>
+                      ({item.pagesToday}p / {item.totalPages}p)
+                    </span>
+                    {" "}
+                    ({item.status})
                   </li>
                 ))}
               </ul>
@@ -44,7 +62,10 @@ export default function ResultScreen({ plan, onRestart }) {
         이 데이터가 다음 파트(스케줄 저장/화면 표시)로 전달됩니다.
       </p>
 
-      <button onClick={onRestart}>처음부터 다시</button>
+      <div style={{ display: "flex", gap: 8 }}>
+        <button onClick={() => downloadJson(plan)}>JSON으로 저장</button>
+        <button onClick={onRestart}>처음부터 다시</button>
+      </div>
     </div>
   );
 }

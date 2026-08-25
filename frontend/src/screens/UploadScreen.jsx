@@ -80,17 +80,6 @@ export default function UploadScreen({ onParsed }) {
           </p>
         )}
 
-        <label>
-          책 전체 페이지 수 (선택):{" "}
-          <input
-            type="number"
-            value={totalPages}
-            onChange={(e) => setTotalPages(e.target.value)}
-            placeholder="예: 350"
-            style={{ width: 100 }}
-          />
-        </label>
-
         <button onClick={handleUpload} disabled={loading} style={{ width: 160, padding: "8px 0" }}>
           {loading ? "분석 중..." : "업로드 및 분석"}
         </button>

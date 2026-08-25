@@ -5,6 +5,9 @@
 - 페이지 수는 챕터의 estimatedPageCount(실측 또는 평균 추정치)를 그대로 쓴다.
 - "하루 가용 시간에 비례해서 전체 분량을 나눈다"는 단순한 방식이다.
   (읽는 속도를 따로 입력받지 않고, 시간이 2배인 날은 분량도 2배로 배정)
+- 페이지는 소수점이 아니라 정수 단위로 배정한다. 그날그날 반올림하면 오차가
+  누적되므로, "누적 목표 페이지"의 차이로 하루치를 계산해 전체 합이 항상
+  총 페이지 수와 정확히 일치하게 한다.
 """
 from __future__ import annotations
 
@@ -26,6 +29,9 @@ def _get_leaf_items(parsed: dict) -> list[dict]:
     - postprocess.py의 add_estimated_page_counts와 같은 규칙: 소단원이 실제
       페이지를 갖고 있으면 소단원을, 아니면 챕터 자신을 리프로 쓴다.
     - estimatedPageCount가 없는(=평균조차 못 낸) 항목은 스케줄링에서 제외한다.
+    - startPage가 실제로 있으면(needsFallback=False) 그 값을 같이 들고 있어서,
+      나중에 "오늘은 55~66p" 처럼 실제 페이지 범위를 보여줄 수 있게 한다.
+      startPage를 모르는 항목은 페이지 수만 알려주고 범위는 표시하지 않는다.
     """
     leaves = []
     for chapter in parsed.get("chapters", []):
@@ -36,10 +42,18 @@ def _get_leaf_items(parsed: dict) -> list[dict]:
         if subunits and subunits_have_pages:
             for sub in subunits:
                 if sub.get("estimatedPageCount"):
-                    leaves.append({"title": sub["title"], "pageCount": sub["estimatedPageCount"]})
+                    leaves.append({
+                        "title": sub["title"],
+                        "pageCount": int(round(sub["estimatedPageCount"])),
+                        "startPage": sub.get("startPage") if not sub.get("needsFallback") else None,
+                    })
         else:
             if chapter.get("estimatedPageCount"):
-                leaves.append({"title": chapter["title"], "pageCount": chapter["estimatedPageCount"]})
+                leaves.append({
+                    "title": chapter["title"],
+                    "pageCount": int(round(chapter["estimatedPageCount"])),
+                    "startPage": chapter.get("startPage") if not chapter.get("needsFallback") else None,
+                })
     return leaves
 
 
@@ -58,6 +72,26 @@ def _study_days(
     return days
 
 
+def _daily_page_budgets(total_pages: int, day_minutes: list[int], total_minutes: int) -> list[int]:
+    """
+    하루하루 배정할 페이지 수(정수)를 "누적 목표치의 차이"로 계산한다.
+    예: 총 100페이지를 5일에 걸쳐 나눌 때, 그날그날 20.0, 20.0, ... 처럼 딱 떨어지지
+    않고 소수점이 있으면(예: 32페이지를 4일에), 매일 그냥 반올림하면 합이 총
+    페이지 수랑 안 맞을 수 있다. 대신 "1일차까지 누적 목표", "2일차까지 누적
+    목표"... 를 각각 반올림하고 그 차이를 그날 배정량으로 쓰면, 마지막 날 누적
+    목표는 항상 total_pages와 정확히 같아서 전체 합이 어긋나지 않는다.
+    """
+    budgets = []
+    cum_minutes = 0
+    prev_target = 0
+    for minutes in day_minutes:
+        cum_minutes += minutes
+        target = round(total_pages * cum_minutes / total_minutes) if total_minutes > 0 else 0
+        budgets.append(target - prev_target)
+        prev_target = target
+    return budgets
+
+
 def generate_study_plan(
     parsed_toc: dict,
     start_date: datetime.date,
@@ -68,14 +102,14 @@ def generate_study_plan(
     """
     parsed_toc: postprocess_toc_result()의 반환값
     start_date, target_date: 학습 시작일/목표일 (둘 다 포함하는 범위)
-    weekday_minutes: {"월": 60, "화": 60, ..., "토": 180, "일": 180} 형태의
-                      요일별 가용 시간(분). parse_hhmm()으로 "시:분" 입력을 변환해 넣으면 된다.
+    weekday_minutes: {"월": 60, ..., "토": 180, "일": 180} 형태의 요일별 가용 시간(분).
     excluded_dates: 학습이 불가능한 날짜 목록
 
     반환값:
     {
         "days": [{"date": "2026-08-25", "minutes": 60,
-                   "items": [{"title": ..., "pagesToday": 4.2, "totalPages": 9, "status": "시작"}]}],
+                   "items": [{"title": ..., "pagesToday": 8, "totalPages": 32,
+                              "pageRange": "55~62p", "status": "시작"}]}],
         "totalPages": ...,
         "totalMinutes": ...,
         "warnings": [...],
@@ -94,26 +128,36 @@ def generate_study_plan(
     if total_minutes <= 0:
         warnings.append("학습 가능한 시간이 0분입니다. 요일별 가용 시간이나 학습 기간을 확인해주세요.")
     if not leaves or total_minutes <= 0:
-        return {"days": [], "totalPages": round(total_pages, 1), "totalMinutes": total_minutes, "warnings": warnings}
+        return {"days": [], "totalPages": total_pages, "totalMinutes": total_minutes, "warnings": warnings}
 
-    pages_per_minute = total_pages / total_minutes
+    day_page_budgets = _daily_page_budgets(total_pages, day_minutes, total_minutes)
 
     leaf_idx = 0
-    leaf_total_remaining = leaves[0]["pageCount"]
-    leaf_consumed_so_far = 0.0
+    leaf_remaining = leaves[0]["pageCount"]
+    leaf_consumed = 0
 
     day_plans = []
-    for d, minutes in zip(days, day_minutes):
-        pages_budget = minutes * pages_per_minute
+    for d, minutes, budget in zip(days, day_minutes, day_page_budgets):
         items = []
+        pages_left_today = budget
 
-        while pages_budget > 1e-9 and leaf_idx < len(leaves):
+        while pages_left_today > 0 and leaf_idx < len(leaves):
             current = leaves[leaf_idx]
-            take = min(pages_budget, leaf_total_remaining)
-            starts_today = leaf_consumed_so_far == 0
-            leaf_consumed_so_far += take
-            leaf_total_remaining -= take
-            finishes_today = leaf_total_remaining <= 1e-9
+            take = min(pages_left_today, leaf_remaining)
+            if take <= 0:
+                break
+
+            starts_today = leaf_consumed == 0
+            if current["startPage"] is not None:
+                range_start = current["startPage"] + leaf_consumed
+                range_end = range_start + take - 1
+                page_range = f"{range_start}~{range_end}p"
+            else:
+                page_range = None
+
+            leaf_consumed += take
+            leaf_remaining -= take
+            finishes_today = leaf_remaining <= 0
 
             status = (
                 "완료" if starts_today and finishes_today else
@@ -123,17 +167,18 @@ def generate_study_plan(
             )
             items.append({
                 "title": current["title"],
-                "pagesToday": round(take, 1),
+                "pagesToday": take,
                 "totalPages": current["pageCount"],
+                "pageRange": page_range,
                 "status": status,
             })
 
-            pages_budget -= take
+            pages_left_today -= take
             if finishes_today:
                 leaf_idx += 1
-                leaf_consumed_so_far = 0.0
+                leaf_consumed = 0
                 if leaf_idx < len(leaves):
-                    leaf_total_remaining = leaves[leaf_idx]["pageCount"]
+                    leaf_remaining = leaves[leaf_idx]["pageCount"]
 
         day_plans.append({"date": d.isoformat(), "minutes": minutes, "items": items})
 
@@ -142,7 +187,7 @@ def generate_study_plan(
 
     return {
         "days": day_plans,
-        "totalPages": round(total_pages, 1),
+        "totalPages": total_pages,
         "totalMinutes": total_minutes,
         "warnings": warnings,
     }
