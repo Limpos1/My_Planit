@@ -4,7 +4,7 @@ import SelectUnitsScreen from "./screens/SelectUnitsScreen";
 import CalendarScreen from "./screens/CalendarScreen";
 import AvailabilityScreen from "./screens/AvailabilityScreen";
 import GeneratingScreen from "./screens/GeneratingScreen";
-import ResultScreen from "./screens/ResultScreen";
+import MainScreen from "./screens/MainScreen";
 import { filterParsedToc, rangeMinutes } from "./lib/toc";
 
 const API_BASE = "http://localhost:8000";
@@ -56,6 +56,7 @@ export default function App() {
   const handleAvailabilityNext = async (availability) => {
     setStep(5);
     setError("");
+    setPlan(null);
     const weekdayMinutes = buildWeekdayMinutes(availability);
 
     try {
@@ -76,7 +77,8 @@ export default function App() {
       }
       const data = await res.json();
       setPlan(data);
-      setStep(6);
+      // 완료 메시지를 잠깐 보여준 뒤 메인페이지(달력)로 자동 이동
+      setTimeout(() => setStep(6), 1500);
     } catch (e) {
       setError(e.message || "플랜 생성 중 오류가 발생했습니다.");
       setStep(4);
@@ -96,8 +98,8 @@ export default function App() {
       )}
       {step === 3 && <CalendarScreen onNext={handleCalendarNext} onBack={() => setStep(2)} />}
       {step === 4 && <AvailabilityScreen onNext={handleAvailabilityNext} onBack={() => setStep(3)} />}
-      {step === 5 && <GeneratingScreen />}
-      {step === 6 && <ResultScreen plan={plan} onRestart={restart} />}
+      {step === 5 && <GeneratingScreen done={!!plan} />}
+      {step === 6 && <MainScreen plan={plan} onRestart={restart} />}
     </div>
   );
 }
