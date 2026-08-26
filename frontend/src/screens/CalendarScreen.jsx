@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { s, theme } from "../theme";
 
 const WEEKDAY_LABELS = ["일", "월", "화", "수", "목", "금", "토"];
 
@@ -103,41 +104,48 @@ export default function CalendarScreen({ onNext, onBack }) {
 
   return (
     <div>
-      <h2>3. 학습 기간 설정</h2>
+      <span style={s.tag}>🗓️ 학습 기간</span>
+      <h2 style={s.title}>학습 기간을 설정하세요</h2>
 
-      <div style={{ marginBottom: 16 }}>
-        <label style={{ marginRight: 16 }}>
+      <div style={{ display: "flex", gap: 16, marginBottom: 16 }}>
+        <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 14 }}>
           <input
             type="radio"
             checked={startMode === "today"}
             onChange={() => handleStartModeChange("today")}
-          />{" "}
+            style={{ accentColor: theme.colors.primary }}
+          />
           오늘부터 시작 ({fmt(today)})
         </label>
-        <label>
+        <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 14 }}>
           <input
             type="radio"
             checked={startMode === "tomorrow"}
             onChange={() => handleStartModeChange("tomorrow")}
-          />{" "}
+            style={{ accentColor: theme.colors.primary }}
+          />
           내일부터 시작 ({fmt(addDays(today, 1))})
         </label>
       </div>
 
-      <p style={{ color: "#555" }}>
+      <p style={s.subtitle}>
         {targetDateStr
           ? "체크된 날짜가 학습 가능일이에요. 못 하는 날짜는 클릭해서 체크를 해제하세요."
           : "목표일을 달력에서 클릭하세요."}
       </p>
 
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
-        <button onClick={() => setViewDate(new Date(viewDate.getFullYear(), viewDate.getMonth() - 1, 1))}>
+        <button
+          onClick={() => setViewDate(new Date(viewDate.getFullYear(), viewDate.getMonth() - 1, 1))}
+          style={{ ...s.btnSecondary, padding: "6px 12px" }}
+        >
           ◀
         </button>
-        <strong>
-          {viewDate.getFullYear()}년 {viewDate.getMonth() + 1}월
-        </strong>
-        <button onClick={() => setViewDate(new Date(viewDate.getFullYear(), viewDate.getMonth() + 1, 1))}>
+        <strong>{viewDate.getFullYear()}년 {viewDate.getMonth() + 1}월</strong>
+        <button
+          onClick={() => setViewDate(new Date(viewDate.getFullYear(), viewDate.getMonth() + 1, 1))}
+          style={{ ...s.btnSecondary, padding: "6px 12px" }}
+        >
           ▶
         </button>
       </div>
@@ -146,7 +154,7 @@ export default function CalendarScreen({ onNext, onBack }) {
         <thead>
           <tr>
             {WEEKDAY_LABELS.map((w) => (
-              <th key={w} style={{ padding: 6, color: "#888", fontWeight: "normal" }}>
+              <th key={w} style={{ padding: 6, color: theme.colors.textSoft, fontWeight: 500, fontSize: 13 }}>
                 {w}
               </th>
             ))}
@@ -164,13 +172,13 @@ export default function CalendarScreen({ onNext, onBack }) {
                 const isChecked = checkedDates.has(key);
 
                 let bg = "transparent";
-                let color = "#1a1a1a";
-                if (disabled) color = "#ccc";
-                else if (isTarget) bg = "#3457d5";
-                else if (inRange && isChecked) bg = "#cfe0ff";
-                else if (inRange && !isChecked) bg = "#f3f3f3";
+                let color = theme.colors.text;
+                if (disabled) color = "#D8D3E0";
+                else if (isTarget) bg = theme.colors.primary;
+                else if (inRange && isChecked) bg = theme.colors.primarySoft;
+                else if (inRange && !isChecked) bg = "#F1EEF6";
                 if (isTarget) color = "#fff";
-                else if (inRange && !isChecked) color = "#aaa";
+                else if (inRange && !isChecked) color = "#B7B0C4";
 
                 return (
                   <td key={di} style={{ padding: 4, textAlign: "center" }}>
@@ -180,10 +188,11 @@ export default function CalendarScreen({ onNext, onBack }) {
                       style={{
                         width: 34,
                         height: 34,
-                        borderRadius: 6,
+                        borderRadius: theme.radius.sm,
                         border: "none",
                         background: bg,
                         color,
+                        fontWeight: isTarget ? 700 : 500,
                         cursor: disabled ? "not-allowed" : "pointer",
                         textDecoration: inRange && !isChecked && !isTarget ? "line-through" : "none",
                       }}
@@ -199,17 +208,21 @@ export default function CalendarScreen({ onNext, onBack }) {
       </table>
 
       {targetDateStr && (
-        <p style={{ color: "#555" }}>
-          목표일: <b>{targetDateStr}</b> · 학습 가능일 {checkedDates.size}일 (제외 {excludedCount}일){" "}
-          <button onClick={resetTarget} style={{ marginLeft: 8 }}>
+        <p style={{ color: theme.colors.textSoft, fontSize: 13 }}>
+          목표일: <b style={{ color: theme.colors.text }}>{targetDateStr}</b> · 학습 가능일 {checkedDates.size}일 (제외 {excludedCount}일){" "}
+          <button onClick={resetTarget} style={{ ...s.btnSecondary, padding: "4px 12px", fontSize: 12, marginLeft: 8 }}>
             목표일 다시 정하기
           </button>
         </p>
       )}
 
-      <div style={{ display: "flex", gap: 8, marginTop: 16 }}>
-        <button onClick={onBack}>이전</button>
-        <button onClick={goNext} disabled={!targetDateStr || checkedDates.size === 0}>
+      <div style={s.btnRow}>
+        <button onClick={onBack} style={s.btnSecondary}>이전</button>
+        <button
+          onClick={goNext}
+          disabled={!targetDateStr || checkedDates.size === 0}
+          style={s.btnPrimary(!targetDateStr || checkedDates.size === 0)}
+        >
           다음
         </button>
       </div>

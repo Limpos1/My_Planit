@@ -1,11 +1,11 @@
 import { useState } from "react";
+import { s, theme } from "../theme";
 
 const API_BASE = "http://localhost:8000";
 
 export default function UploadScreen({ onParsed }) {
   const [files, setFiles] = useState([]);
   const [fileKind, setFileKind] = useState("image");
-  const [totalPages, setTotalPages] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
@@ -37,7 +37,6 @@ export default function UploadScreen({ onParsed }) {
     } else {
       files.forEach((f) => formData.append("files", f));
     }
-    if (totalPages) formData.append("total_pages", totalPages);
 
     const endpoint = fileKind === "pdf" ? "/parse-toc/pdf" : "/parse-toc/image";
 
@@ -61,31 +60,53 @@ export default function UploadScreen({ onParsed }) {
 
   return (
     <div>
-      <h2>1. 목차 업로드</h2>
-      <p>책 목차 사진(여러 장 가능) 또는 PDF 파일을 업로드하세요.</p>
+      <span style={s.tag}>📷 목차 업로드</span>
+      <h2 style={s.title}>목차 사진 한 장이면 충분해요</h2>
+      <p style={s.subtitle}>책 목차 사진(여러 장 가능) 또는 PDF 파일을 업로드하세요.</p>
 
-      <div style={{ display: "flex", flexDirection: "column", gap: 12, marginBottom: 24 }}>
+      <div
+        style={{
+          border: `1.5px dashed ${theme.colors.border}`,
+          borderRadius: theme.radius.md,
+          padding: 24,
+          textAlign: "center",
+          marginBottom: 16,
+          background: "#FBF9FE",
+        }}
+      >
         <input type="file" accept="image/*,.pdf" multiple onChange={handleFileChange} />
+      </div>
 
-        {files.length > 0 && (
-          <ul style={{ margin: 0, color: "#555" }}>
-            {files.map((f, i) => (
-              <li key={i}>{f.name}</li>
-            ))}
-          </ul>
-        )}
-        {fileKind === "image" && files.length > 1 && (
-          <p style={{ color: "#888", fontSize: 14, margin: 0 }}>
-            사진 {files.length}장을 하나의 목차로 이어서 분석합니다.
-          </p>
-        )}
+      {files.length > 0 && (
+        <ul style={{ margin: "0 0 16px", padding: 0, listStyle: "none" }}>
+          {files.map((f, i) => (
+            <li
+              key={i}
+              style={{
+                fontSize: 13,
+                color: theme.colors.textSoft,
+                padding: "6px 0",
+                borderBottom: `1px solid ${theme.colors.border}`,
+              }}
+            >
+              {f.name}
+            </li>
+          ))}
+        </ul>
+      )}
+      {fileKind === "image" && files.length > 1 && (
+        <p style={{ ...s.subtitle, marginBottom: 16 }}>
+          사진 {files.length}장을 하나의 목차로 이어서 분석합니다.
+        </p>
+      )}
 
-        <button onClick={handleUpload} disabled={loading} style={{ width: 160, padding: "8px 0" }}>
+      <div style={s.btnRow}>
+        <button onClick={handleUpload} disabled={loading} style={s.btnPrimary(loading)}>
           {loading ? "분석 중..." : "업로드 및 분석"}
         </button>
       </div>
 
-      {error && <p style={{ color: "crimson", fontWeight: "bold" }}>{error}</p>}
+      {error && <p style={s.errorText}>{error}</p>}
     </div>
   );
 }

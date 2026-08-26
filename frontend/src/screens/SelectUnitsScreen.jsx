@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { getLeafUnits } from "../lib/toc";
+import { s, theme } from "../theme";
 
 export default function SelectUnitsScreen({ parsedToc, onNext, onBack }) {
   const leaves = getLeafUnits(parsedToc);
@@ -16,48 +17,36 @@ export default function SelectUnitsScreen({ parsedToc, onNext, onBack }) {
 
   return (
     <div>
-      <h2>2. 학습할 과목 선택</h2>
-      <p>기본적으로 전부 체크되어 있어요. 이번에 공부하지 않을 항목은 체크를 해제하세요.</p>
+      <span style={s.tag}>✅ 결과 확인</span>
+      <h2 style={s.title}>학습할 과목을 선택하세요</h2>
+      <p style={s.subtitle}>기본적으로 전부 체크되어 있어요. 이번에 공부하지 않을 항목은 체크를 해제하세요.</p>
 
-      <div
-        style={{
-          maxHeight: 420,
-          overflowY: "auto",
-          border: "1px solid #ddd",
-          borderRadius: 8,
-          padding: 8,
-          marginBottom: 16,
-        }}
-      >
+      <div style={s.listBox}>
         {leaves.map((leaf) => (
-          <label
-            key={leaf.key}
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 8,
-              padding: "6px 4px",
-              borderBottom: "1px solid #eee",
-            }}
-          >
-            <input type="checkbox" checked={checked[leaf.key]} onChange={() => toggle(leaf.key)} />
-            <span style={{ flex: 1 }}>
-              {leaf.parentTitle && <span style={{ color: "#999" }}>{leaf.parentTitle} · </span>}
+          <label key={leaf.key} style={s.listRow}>
+            <input
+              type="checkbox"
+              checked={checked[leaf.key]}
+              onChange={() => toggle(leaf.key)}
+              style={{ width: 16, height: 16, accentColor: theme.colors.primary }}
+            />
+            <span style={{ flex: 1, fontSize: 14 }}>
+              {leaf.parentTitle && <span style={{ color: theme.colors.textSoft }}>{leaf.parentTitle} · </span>}
               {leaf.title}
             </span>
-            <span style={{ color: "#888", fontSize: 13 }}>{leaf.pageInfo}</span>
+            <span style={{ color: theme.colors.textSoft, fontSize: 12 }}>{leaf.pageInfo}</span>
           </label>
         ))}
-        {leaves.length === 0 && <p style={{ color: "#888" }}>선택 가능한 학습 항목이 없어요.</p>}
+        {leaves.length === 0 && <p style={{ color: theme.colors.textSoft, padding: 12 }}>선택 가능한 학습 항목이 없어요.</p>}
       </div>
 
-      <p style={{ color: "#555" }}>
+      <p style={{ color: theme.colors.textSoft, fontSize: 13, fontWeight: 600 }}>
         {checkedCount} / {leaves.length}개 선택됨
       </p>
 
-      <div style={{ display: "flex", gap: 8 }}>
-        <button onClick={onBack}>이전</button>
-        <button onClick={() => onNext(excludedKeys)} disabled={checkedCount === 0}>
+      <div style={s.btnRow}>
+        <button onClick={onBack} style={s.btnSecondary}>이전</button>
+        <button onClick={() => onNext(excludedKeys)} disabled={checkedCount === 0} style={s.btnPrimary(checkedCount === 0)}>
           다음
         </button>
       </div>

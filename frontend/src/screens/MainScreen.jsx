@@ -1,5 +1,7 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { s, theme } from "../theme";
 
+const API_BASE = "http://localhost:8000";
 const WEEKDAY_LABELS = ["일", "월", "화", "수", "목", "금", "토"];
 
 function toKey(y, m, d) {
@@ -18,7 +20,25 @@ function downloadJson(plan) {
   URL.revokeObjectURL(url);
 }
 
-export default function MainScreen({ plan, onRestart }) {
+export default function MainScreen() {
+  const [plan, setPlan] = useState(null);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    const userId = localStorage.getItem("userId"); // TODO: 로그인 파트와 협의해서 실제 식별자로 교체
+    if (!userId) {
+      setError("로그인 정보가 없어 플랜을 불러올 수 없습니다.");
+      return;
+    }
+    fetch(`${API_BASE}/plans/${userId}`)
+      .then((res) => {
+        if (!res.ok) throw new Error("저장된 학습 플랜이 없습니다.");
+        return res.json();
+      })
+      .then(setPlan)
+      .catch((e) => setError(e.message));
+  }, []);
+
   const planByDate = useMemo(() => {
     const map = {};
     (plan?.days || []).forEach((day) => {
@@ -33,7 +53,8 @@ export default function MainScreen({ plan, onRestart }) {
   const [viewMonth, setViewMonth] = useState(initialMonth.getMonth());
   const [selectedDate, setSelectedDate] = useState(firstDayWithPlan || null);
 
-  if (!plan) return null;
+  if (error) return <p style={s.errorText}>{error}</p>;
+  if (!plan) return <p style={s.subtitle}>학습 플랜을 불러오는 중...</p>;
 
   const firstOfMonth = new Date(viewYear, viewMonth, 1);
   const startWeekday = firstOfMonth.getDay();
@@ -60,31 +81,32 @@ export default function MainScreen({ plan, onRestart }) {
 
   return (
     <div>
-      <h2>메인 - 학습 스케줄 달력</h2>
+      <span style={s.tag}>📅 메인</span>
+      <h2 style={s.title}>학습 스케줄 달력</h2>
 
       {plan.warnings?.length > 0 && (
-        <div style={{ background: "#fff8e1", border: "1px solid #ffe082", borderRadius: 8, padding: 12, marginBottom: 16 }}>
+        <div style={s.warningBox}>
           {plan.warnings.map((w, i) => (
-            <p key={i} style={{ margin: 0, color: "#8a6d00" }}>⚠ {w}</p>
+            <p key={i} style={s.warningText}>⚠ {w}</p>
           ))}
         </div>
       )}
 
-      <p style={{ color: "#555" }}>
+      <p style={s.subtitle}>
         총 {plan.totalPages}페이지 · 총 {plan.totalMinutes}분 배정
       </p>
 
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 16, margin: "12px 0" }}>
-        <button onClick={goPrevMonth}>◀</button>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 16, margin: "4px 0 12px" }}>
+        <button onClick={goPrevMonth} style={{ ...s.btnSecondary, padding: "6px 12px" }}>◀</button>
         <strong>{viewYear}년 {viewMonth + 1}월</strong>
-        <button onClick={goNextMonth}>▶</button>
+        <button onClick={goNextMonth} style={{ ...s.btnSecondary, padding: "6px 12px" }}>▶</button>
       </div>
 
       <table style={{ width: "100%", borderCollapse: "collapse", marginBottom: 16 }}>
         <thead>
           <tr>
             {WEEKDAY_LABELS.map((w) => (
-              <th key={w} style={{ padding: 6, color: "#888", fontWeight: "normal" }}>{w}</th>
+              <th key={w} style={{ padding: 6, color: theme.colors.textSoft, fontWeight: 500, fontSize: 13 }}>{w}</th>
             ))}
           </tr>
         </thead>
@@ -98,22 +120,23 @@ export default function MainScreen({ plan, onRestart }) {
                 const totalPages = day ? day.items.reduce((sum, it) => sum + it.pagesToday, 0) : 0;
                 const isSelected = key === selectedDate;
                 return (
-                  <td key={i} style={{ padding: 4, textAlign: "center" }}>
+                  <td key={i} style={{ padding: 3, textAlign: "center" }}>
                     <button
                       onClick={() => day && setSelectedDate(key)}
                       disabled={!day}
                       style={{
                         width: "100%",
                         padding: "8px 4px",
-                        borderRadius: 8,
-                        border: isSelected ? "2px solid #2E5395" : "1px solid #ddd",
-                        background: day ? (isSelected ? "#eaf0fb" : "#fff") : "#f5f5f5",
-                        color: day ? "#000" : "#ccc",
+                        borderRadius: theme.radius.sm,
+                        border: isSelected ? `2px solid ${theme.colors.primary}` : `1px solid ${theme.colors.border}`,
+                        background: day ? (isSelected ? theme.colors.primarySoft : "#fff") : "#F7F4FA",
+                        color: day ? theme.colors.text : "#D8D3E0",
                         cursor: day ? "pointer" : "default",
+                        fontFamily: theme.font,
                       }}
                     >
                       <div>{d}</div>
-                      {day && <div style={{ fontSize: 11, color: "#2E5395" }}>{totalPages}p</div>}
+                      {day && <div style={{ fontSize: 11, color: theme.colors.primaryDark, fontWeight: 700 }}>{totalPages}p</div>}
                     </button>
                   </td>
                 );
@@ -123,21 +146,21 @@ export default function MainScreen({ plan, onRestart }) {
         </tbody>
       </table>
 
-      <div style={{ border: "1px solid #ddd", borderRadius: 8, padding: 12, marginBottom: 20, minHeight: 60 }}>
+      <div style={{ border: `1px solid ${theme.colors.border}`, borderRadius: theme.radius.md, padding: 16, marginBottom: 20, minHeight: 60, background: "#FBF9FE" }}>
         {!selectedDay ? (
-          <p style={{ color: "#aaa", margin: 0 }}>날짜를 선택하면 그날의 학습 항목을 보여줍니다.</p>
+          <p style={{ color: theme.colors.textSoft, margin: 0, fontSize: 14 }}>날짜를 선택하면 그날의 학습 항목을 보여줍니다.</p>
         ) : (
           <>
             <strong>{selectedDay.date} ({selectedDay.minutes}분)</strong>
             {selectedDay.items.length === 0 ? (
-              <p style={{ color: "#aaa", margin: "6px 0 0" }}>배정된 항목 없음</p>
+              <p style={{ color: theme.colors.textSoft, margin: "6px 0 0" }}>배정된 항목 없음</p>
             ) : (
-              <ul style={{ margin: "6px 0 0" }}>
+              <ul style={{ margin: "8px 0 0", paddingLeft: 18 }}>
                 {selectedDay.items.map((item, i) => (
-                  <li key={i}>
+                  <li key={i} style={{ marginBottom: 4, fontSize: 14 }}>
                     {item.title} — {item.pageRange ? item.pageRange : `${item.pagesToday}p`}
                     {" "}
-                    <span style={{ color: "#999" }}>({item.pagesToday}p / {item.totalPages}p)</span>
+                    <span style={{ color: theme.colors.textSoft }}>({item.pagesToday}p / {item.totalPages}p)</span>
                     {" "}({item.status})
                   </li>
                 ))}
@@ -147,10 +170,7 @@ export default function MainScreen({ plan, onRestart }) {
         )}
       </div>
 
-      <div style={{ display: "flex", gap: 8 }}>
-        <button onClick={() => downloadJson(plan)}>JSON으로 저장</button>
-        <button onClick={onRestart}>처음부터 다시</button>
-      </div>
+      <button onClick={() => downloadJson(plan)} style={s.btnSecondary}>JSON으로 저장</button>
     </div>
   );
 }
