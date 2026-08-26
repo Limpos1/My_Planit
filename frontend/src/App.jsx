@@ -5,11 +5,12 @@ import SelectUnitsScreen from "./screens/SelectUnitsScreen";
 import CalendarScreen from "./screens/CalendarScreen";
 import AvailabilityScreen from "./screens/AvailabilityScreen";
 import GeneratingScreen from "./screens/GeneratingScreen";
+import MainScreen from "./screens/MainScreen";
 import { filterParsedToc, rangeMinutes } from "./lib/toc";
 import { s } from "./theme";
 
 const API_BASE = "http://localhost:8000";
-const MAIN_PAGE_URL = "/"; // TODO: 팀 전체 메인페이지의 실제 경로로 교체
+const MAIN_PAGE_URL = "/main";
 const WEEKDAY_KEYS = ["일", "월", "화", "수", "목", "금", "토"];
 
 const STEP_ROUTES = [
@@ -61,7 +62,7 @@ function AppRoutes() {
     setError("");
     setDone(false);
     const weekdayMinutes = buildWeekdayMinutes(availability);
-    const userId = localStorage.getItem("userId"); // TODO: 로그인 파트와 협의해서 실제 식별자로 교체
+    const userId = localStorage.getItem("userId") || "guest"; // TODO: 로그인 붙으면 이 fallback 제거
 
     try {
       const res = await fetch(`${API_BASE}/generate-plan`, {
@@ -83,13 +84,19 @@ function AppRoutes() {
       await res.json();
       setDone(true);
       setTimeout(() => {
-        window.location.href = MAIN_PAGE_URL;
+        navigate(MAIN_PAGE_URL);
       }, 1500);
     } catch (e) {
       setError(e.message || "플랜 생성 중 오류가 발생했습니다.");
       navigate("/availability");
     }
   };
+
+  // "/main"은 팀 전체 메인페이지 — 마법사 껍데기(스텝바/카드) 없이 MainScreen이
+  // 자기 레이아웃을 통째로 그린다. 그 외 경로는 좁은 마법사 카드 안에서 보여준다.
+  if (location.pathname === "/main") {
+    return <MainScreen />;
+  }
 
   const currentStepIndex = STEP_ROUTES.findIndex((r) => r.path === location.pathname);
 

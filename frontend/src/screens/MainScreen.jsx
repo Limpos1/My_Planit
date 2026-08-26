@@ -1,11 +1,16 @@
 import { useEffect, useMemo, useState } from "react";
-import { s, theme } from "../theme";
+import { theme } from "../theme";
 
 const API_BASE = "http://localhost:8000";
 const WEEKDAY_LABELS = ["일", "월", "화", "수", "목", "금", "토"];
+const PROGRESS_STEPS = [25, 50, 75, 100];
 
 function toKey(y, m, d) {
   return `${y}-${String(m + 1).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+}
+function todayKey() {
+  const t = new Date();
+  return toKey(t.getFullYear(), t.getMonth(), t.getDate());
 }
 
 function downloadJson(plan) {
@@ -20,23 +25,72 @@ function downloadJson(plan) {
   URL.revokeObjectURL(url);
 }
 
+const page = {
+  minHeight: "100vh",
+  background: theme.colors.bg,
+  fontFamily: theme.font,
+  color: theme.colors.text,
+};
+const stickyHeader = {
+  position: "sticky",
+  top: 0,
+  zIndex: 10,
+};
+const topbar = {
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "space-between",
+  padding: "16px 28px",
+  borderBottom: `1px solid ${theme.colors.border}`,
+};
+const hamburgerBtn = {
+  border: "none",
+  background: "transparent",
+  fontSize: 20,
+  cursor: "pointer",
+  color: theme.colors.text,
+  padding: 4,
+};
+const topMenuLink = {
+  color: theme.colors.textSoft,
+  fontSize: 13,
+  fontWeight: 600,
+  cursor: "pointer",
+};
+const layout = {
+  display: "grid",
+  gridTemplateColumns: "1.4fr 1fr",
+  gap: 24,
+  padding: "28px",
+  maxWidth: 1080,
+  margin: "0 auto",
+  alignItems: "start",
+};
+
 export default function MainScreen() {
   const [plan, setPlan] = useState(null);
   const [error, setError] = useState("");
+  const [pendingProgress, setPendingProgress] = useState({});
+  const [saving, setSaving] = useState(false);
+  const [saveMsg, setSaveMsg] = useState("");
 
-  useEffect(() => {
-    const userId = localStorage.getItem("userId"); // TODO: 로그인 파트와 협의해서 실제 식별자로 교체
-    if (!userId) {
-      setError("로그인 정보가 없어 플랜을 불러올 수 없습니다.");
-      return;
-    }
+  const userId = localStorage.getItem("userId") || "guest"; // TODO: 로그인 붙으면 이 fallback 제거
+
+  const loadPlan = () => {
     fetch(`${API_BASE}/plans/${userId}`)
       .then((res) => {
         if (!res.ok) throw new Error("저장된 학습 플랜이 없습니다.");
         return res.json();
       })
-      .then(setPlan)
+      .then((data) => {
+        setPlan(data);
+        setError("");
+      })
       .catch((e) => setError(e.message));
+  };
+
+  useEffect(() => {
+    loadPlan();
   }, []);
 
   const planByDate = useMemo(() => {
@@ -51,15 +105,66 @@ export default function MainScreen() {
   const initialMonth = firstDayWithPlan ? new Date(firstDayWithPlan) : new Date();
   const [viewYear, setViewYear] = useState(initialMonth.getFullYear());
   const [viewMonth, setViewMonth] = useState(initialMonth.getMonth());
-  const [selectedDate, setSelectedDate] = useState(firstDayWithPlan || null);
+  const [selectedDate, setSelectedDate] = useState(todayKey());
 
-  if (error) return <p style={s.errorText}>{error}</p>;
-  if (!plan) return <p style={s.subtitle}>학습 플랜을 불러오는 중...</p>;
+  const todayItems = planByDate[todayKey()]?.items || [];
+
+  useEffect(() => {
+    const init = {};
+    todayItems.forEach((item, i) => {
+      init[i] = item.progress ?? 0;
+    });
+    setPendingProgress(init);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [plan]);
+
+  const handleComplete = async () => {
+    setSaving(true);
+    setSaveMsg("");
+    try {
+      const res = await fetch(`${API_BASE}/plans/${userId}/progress`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          date: todayKey(),
+          items: todayItems.map((_, i) => pendingProgress[i] ?? 0),
+        }),
+      });
+      if (!res.ok) throw new Error("진도율 저장에 실패했습니다.");
+      const updated = await res.json();
+      setPlan(updated);
+      setSaveMsg("오늘 진도율이 저장됐어요!");
+    } catch (e) {
+      setSaveMsg(e.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (error) {
+    return (
+      <div style={page}>
+        <div style={topbar}>
+          <strong>Planit</strong>
+        </div>
+        <p style={{ padding: 28, color: theme.colors.danger }}>{error}</p>
+      </div>
+    );
+  }
+  if (!plan) {
+    return (
+      <div style={page}>
+        <div style={topbar}>
+          <strong>Planit</strong>
+        </div>
+        <p style={{ padding: 28, color: theme.colors.textSoft }}>학습 플랜을 불러오는 중...</p>
+      </div>
+    );
+  }
 
   const firstOfMonth = new Date(viewYear, viewMonth, 1);
   const startWeekday = firstOfMonth.getDay();
   const daysInMonth = new Date(viewYear, viewMonth + 1, 0).getDate();
-
   const cells = [];
   for (let i = 0; i < startWeekday; i++) cells.push(null);
   for (let d = 1; d <= daysInMonth; d++) cells.push(d);
@@ -80,97 +185,179 @@ export default function MainScreen() {
   const selectedDay = selectedDate ? planByDate[selectedDate] : null;
 
   return (
-    <div>
-      <span style={s.tag}>📅 메인</span>
-      <h2 style={s.title}>학습 스케줄 달력</h2>
-
-      {plan.warnings?.length > 0 && (
-        <div style={s.warningBox}>
-          {plan.warnings.map((w, i) => (
-            <p key={i} style={s.warningText}>⚠ {w}</p>
-          ))}
+    <div style={page}>
+    <div style={stickyHeader}>
+      <div style={topbar}>
+        <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
+          <strong style={{ fontSize: 18 }}>Planit</strong>
         </div>
-      )}
-
-      <p style={s.subtitle}>
-        총 {plan.totalPages}페이지 · 총 {plan.totalMinutes}분 배정
-      </p>
-
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 16, margin: "4px 0 12px" }}>
-        <button onClick={goPrevMonth} style={{ ...s.btnSecondary, padding: "6px 12px" }}>◀</button>
-        <strong>{viewYear}년 {viewMonth + 1}월</strong>
-        <button onClick={goNextMonth} style={{ ...s.btnSecondary, padding: "6px 12px" }}>▶</button>
+        <div style={{ display: "flex", gap: 20 }}>
+          {/* TODO: 로그인 파트와 연결 — 로그아웃/마이페이지 */}
+          <span style={topMenuLink}>마이페이지</span>
+          <span style={topMenuLink}>로그아웃</span>
+        </div>
+      </div>
+      <div style={{ padding: "8px 28px", borderBottom: `1px solid ${theme.colors.border}`, background: theme.colors.bg }}>
+  <button style={hamburgerBtn} title="메뉴">☰</button>
+</div>
       </div>
 
-      <table style={{ width: "100%", borderCollapse: "collapse", marginBottom: 16 }}>
-        <thead>
-          <tr>
-            {WEEKDAY_LABELS.map((w) => (
-              <th key={w} style={{ padding: 6, color: theme.colors.textSoft, fontWeight: 500, fontSize: 13 }}>{w}</th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {Array.from({ length: Math.ceil(cells.length / 7) }, (_, row) => (
-            <tr key={row}>
-              {cells.slice(row * 7, row * 7 + 7).map((d, i) => {
-                if (d === null) return <td key={i} />;
-                const key = toKey(viewYear, viewMonth, d);
-                const day = planByDate[key];
-                const totalPages = day ? day.items.reduce((sum, it) => sum + it.pagesToday, 0) : 0;
-                const isSelected = key === selectedDate;
-                return (
-                  <td key={i} style={{ padding: 3, textAlign: "center" }}>
-                    <button
-                      onClick={() => day && setSelectedDate(key)}
-                      disabled={!day}
-                      style={{
-                        width: "100%",
-                        padding: "8px 4px",
-                        borderRadius: theme.radius.sm,
-                        border: isSelected ? `2px solid ${theme.colors.primary}` : `1px solid ${theme.colors.border}`,
-                        background: day ? (isSelected ? theme.colors.primarySoft : "#fff") : "#F7F4FA",
-                        color: day ? theme.colors.text : "#D8D3E0",
-                        cursor: day ? "pointer" : "default",
-                        fontFamily: theme.font,
-                      }}
-                    >
-                      <div>{d}</div>
-                      {day && <div style={{ fontSize: 11, color: theme.colors.primaryDark, fontWeight: 700 }}>{totalPages}p</div>}
-                    </button>
-                  </td>
-                );
-              })}
-            </tr>
-          ))}
-        </tbody>
-      </table>
+      <div style={layout}>
+        <div style={{ background: "#fff", border: `1px solid ${theme.colors.border}`, borderRadius: theme.radius.lg, padding: 24, boxShadow: theme.shadow }}>
+          <p style={{ color: theme.colors.textSoft, margin: "0 0 12px", fontSize: 14 }}>
+            총 {plan.totalPages}페이지 · 총 {plan.totalMinutes}분 배정
+          </p>
 
-      <div style={{ border: `1px solid ${theme.colors.border}`, borderRadius: theme.radius.md, padding: 16, marginBottom: 20, minHeight: 60, background: "#FBF9FE" }}>
-        {!selectedDay ? (
-          <p style={{ color: theme.colors.textSoft, margin: 0, fontSize: 14 }}>날짜를 선택하면 그날의 학습 항목을 보여줍니다.</p>
-        ) : (
-          <>
-            <strong>{selectedDay.date} ({selectedDay.minutes}분)</strong>
-            {selectedDay.items.length === 0 ? (
-              <p style={{ color: theme.colors.textSoft, margin: "6px 0 0" }}>배정된 항목 없음</p>
-            ) : (
-              <ul style={{ margin: "8px 0 0", paddingLeft: 18 }}>
-                {selectedDay.items.map((item, i) => (
-                  <li key={i} style={{ marginBottom: 4, fontSize: 14 }}>
-                    {item.title} — {item.pageRange ? item.pageRange : `${item.pagesToday}p`}
-                    {" "}
-                    <span style={{ color: theme.colors.textSoft }}>({item.pagesToday}p / {item.totalPages}p)</span>
-                    {" "}({item.status})
-                  </li>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 16, marginBottom: 12 }}>
+            <button onClick={goPrevMonth} style={s_btnSecondary}>◀</button>
+            <strong>{viewYear}년 {viewMonth + 1}월</strong>
+            <button onClick={goNextMonth} style={s_btnSecondary}>▶</button>
+          </div>
+
+          <table style={{ width: "100%", borderCollapse: "collapse" }}>
+            <thead>
+              <tr>
+                {WEEKDAY_LABELS.map((w) => (
+                  <th key={w} style={{ padding: 6, color: theme.colors.textSoft, fontWeight: 500, fontSize: 13 }}>{w}</th>
                 ))}
-              </ul>
-            )}
-          </>
-        )}
-      </div>
+              </tr>
+            </thead>
+            <tbody>
+              {Array.from({ length: Math.ceil(cells.length / 7) }, (_, row) => (
+                <tr key={row}>
+                  {cells.slice(row * 7, row * 7 + 7).map((d, i) => {
+                    if (d === null) return <td key={i} />;
+                    const key = toKey(viewYear, viewMonth, d);
+                    const day = planByDate[key];
+                    const totalPages = day ? day.items.reduce((sum, it) => sum + it.pagesToday, 0) : 0;
+                    const isSelected = key === selectedDate;
+                    const isToday = key === todayKey();
+                    return (
+                      <td key={i} style={{ padding: 3, textAlign: "center" }}>
+                        <button
+                          onClick={() => day && setSelectedDate(key)}
+                          disabled={!day}
+                          style={{
+                            width: "100%",
+                            padding: "8px 4px",
+                            borderRadius: theme.radius.sm,
+                            border: isSelected ? `2px solid ${theme.colors.primary}` : isToday ? `1.5px solid ${theme.colors.primaryDark}` : `1px solid ${theme.colors.border}`,
+                            background: day ? (isSelected ? theme.colors.primarySoft : "#fff") : "#F7F4FA",
+                            color: day ? theme.colors.text : "#D8D3E0",
+                            cursor: day ? "pointer" : "default",
+                            fontFamily: theme.font,
+                          }}
+                        >
+                          <div>{d}</div>
+                          {day && <div style={{ fontSize: 11, color: theme.colors.primaryDark, fontWeight: 700 }}>{totalPages}p</div>}
+                        </button>
+                      </td>
+                    );
+                  })}
+                </tr>
+              ))}
+            </tbody>
+          </table>
 
-      <button onClick={() => downloadJson(plan)} style={s.btnSecondary}>JSON으로 저장</button>
+          <div style={{ border: `1px solid ${theme.colors.border}`, borderRadius: theme.radius.md, padding: 16, marginTop: 16, background: "#FBF9FE" }}>
+            {!selectedDay ? (
+              <p style={{ color: theme.colors.textSoft, margin: 0, fontSize: 14 }}>날짜를 선택하면 그날의 학습 항목을 보여줍니다.</p>
+            ) : (
+              <>
+                <strong>{selectedDay.date} ({selectedDay.minutes}분)</strong>
+                {selectedDay.items.length === 0 ? (
+                  <p style={{ color: theme.colors.textSoft, margin: "6px 0 0" }}>배정된 항목 없음</p>
+                ) : (
+                  <ul style={{ margin: "8px 0 0", paddingLeft: 18 }}>
+                    {selectedDay.items.map((item, i) => (
+                      <li key={i} style={{ marginBottom: 4, fontSize: 14 }}>
+                        {item.title} — {item.pageRange ? item.pageRange : `${item.pagesToday}p`}
+                        {" "}
+                        <span style={{ color: theme.colors.textSoft }}>({item.pagesToday}p / {item.totalPages}p)</span>
+                        {" "}({item.status}{item.progress != null ? `, ${item.progress}%` : ""})
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </>
+            )}
+          </div>
+
+          <button onClick={() => downloadJson(plan)} style={{ ...s_btnSecondary, marginTop: 16 }}>JSON으로 저장</button>
+        </div>
+
+        <div style={{ background: "#fff", border: `1px solid ${theme.colors.border}`, borderRadius: theme.radius.lg, boxShadow: theme.shadow, display: "flex", flexDirection: "column" }}>
+          <div style={{ padding: 20, flex: 1 }}>
+            <h3 style={{ margin: "0 0 12px", fontSize: 16 }}>오늘 할 일</h3>
+            {todayItems.length === 0 ? (
+              <p style={{ color: theme.colors.textSoft, fontSize: 14 }}>오늘 배정된 학습 항목이 없어요.</p>
+            ) : (
+              todayItems.map((item, i) => (
+                <div key={i} style={{ marginBottom: 18 }}>
+                  <p style={{ margin: "0 0 8px", fontWeight: 600, fontSize: 14 }}>{item.title}</p>
+                  <div style={{ display: "flex", gap: 6 }}>
+                    {PROGRESS_STEPS.map((p) => {
+                      const active = (pendingProgress[i] ?? 0) === p;
+                      return (
+                        <button
+                          key={p}
+                          onClick={() => setPendingProgress((prev) => ({ ...prev, [i]: p }))}
+                          style={{
+                            flex: 1,
+                            padding: "6px 0",
+                            borderRadius: theme.radius.pill,
+                            border: active ? "none" : `1px solid ${theme.colors.border}`,
+                            background: active ? theme.colors.primary : "#fff",
+                            color: active ? "#fff" : theme.colors.textSoft,
+                            fontSize: 12,
+                            fontWeight: 700,
+                            cursor: "pointer",
+                          }}
+                        >
+                          {p}%
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+          {todayItems.length > 0 && (
+            <div style={{ borderTop: `1px solid ${theme.colors.border}`, padding: 16 }}>
+              {saveMsg && <p style={{ fontSize: 12, color: theme.colors.primaryDark, margin: "0 0 8px" }}>{saveMsg}</p>}
+              <button onClick={handleComplete} disabled={saving} style={{ ...s_btnPrimary(saving), width: "100%" }}>
+                {saving ? "저장 중..." : "완료하기"}
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
     </div>
   );
+}
+
+const s_btnSecondary = {
+  fontFamily: theme.font,
+  background: "#fff",
+  color: theme.colors.text,
+  border: `1px solid ${theme.colors.border}`,
+  borderRadius: theme.radius.pill,
+  padding: "6px 14px",
+  fontSize: 13,
+  fontWeight: 700,
+  cursor: "pointer",
+};
+function s_btnPrimary(disabled) {
+  return {
+    fontFamily: theme.font,
+    background: disabled ? theme.colors.disabled : theme.colors.primary,
+    color: "#fff",
+    border: "none",
+    borderRadius: theme.radius.pill,
+    padding: "12px 0",
+    fontSize: 14,
+    fontWeight: 700,
+    cursor: disabled ? "not-allowed" : "pointer",
+  };
 }

@@ -135,6 +135,27 @@ async def get_plan(user_id: str):
         raise HTTPException(status_code=404, detail="저장된 플랜이 없습니다.")
     return plan
 
+class ProgressUpdateRequest(BaseModel):
+    date: str
+    items: list[int]  # 그날 items 배열과 순서를 맞춘 진도율(%) 리스트
+
+
+@app.post("/plans/{user_id}/progress")
+async def update_progress(user_id: str, req: ProgressUpdateRequest):
+    """오늘 할 일 화면에서 사용자가 고른 항목별 진도율(%)을 저장한다."""
+    plan = PLANS_STORE.get(user_id)
+    if plan is None:
+        raise HTTPException(status_code=404, detail="저장된 플랜이 없습니다.")
+
+    day = next((d for d in plan["days"] if d["date"] == req.date), None)
+    if day is None:
+        raise HTTPException(status_code=404, detail="해당 날짜의 플랜이 없습니다.")
+
+    for item, progress in zip(day["items"], req.items):
+        item["progress"] = progress
+
+    PLANS_STORE[user_id] = plan
+    return plan
 
 @app.get("/health")
 async def health():
