@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { BrowserRouter, Routes, Route, Navigate, useNavigate, useLocation } from "react-router-dom";
 import UploadScreen from "./screens/UploadScreen";
 import SelectUnitsScreen from "./screens/SelectUnitsScreen";
 import CalendarScreen from "./screens/CalendarScreen";
@@ -10,7 +11,14 @@ import { s } from "./theme";
 const API_BASE = "http://localhost:8000";
 const MAIN_PAGE_URL = "/"; // TODO: 팀 전체 메인페이지의 실제 경로로 교체
 const WEEKDAY_KEYS = ["일", "월", "화", "수", "목", "금", "토"];
-const STEP_LABELS = ["목차 업로드", "과목 선택", "학습 기간", "가용 시간", "생성 중"];
+
+const STEP_ROUTES = [
+  { path: "/upload", label: "목차 업로드" },
+  { path: "/select", label: "과목 선택" },
+  { path: "/calendar", label: "학습 기간" },
+  { path: "/availability", label: "가용 시간" },
+  { path: "/generating", label: "생성 중" },
+];
 
 function buildWeekdayMinutes({ weekdayRange, weekendRange, weekendExcluded }) {
   const weekdayMinutes = rangeMinutes(weekdayRange);
@@ -23,8 +31,10 @@ function buildWeekdayMinutes({ weekdayRange, weekendRange, weekendExcluded }) {
   return result;
 }
 
-export default function App() {
-  const [step, setStep] = useState(1);
+function AppRoutes() {
+  const navigate = useNavigate();
+  const location = useLocation();
+
   const [parsedToc, setParsedToc] = useState(null);
   const [filteredToc, setFilteredToc] = useState(null);
   const [calendarInfo, setCalendarInfo] = useState(null);
@@ -33,21 +43,21 @@ export default function App() {
 
   const handleParsed = (data) => {
     setParsedToc(data);
-    setStep(2);
+    navigate("/select");
   };
 
   const handleUnitsSelected = (excludedKeys) => {
     setFilteredToc(filterParsedToc(parsedToc, excludedKeys));
-    setStep(3);
+    navigate("/calendar");
   };
 
   const handleCalendarNext = (info) => {
     setCalendarInfo(info);
-    setStep(4);
+    navigate("/availability");
   };
 
   const handleAvailabilityNext = async (availability) => {
-    setStep(5);
+    navigate("/generating");
     setError("");
     setDone(false);
     const weekdayMinutes = buildWeekdayMinutes(availability);
@@ -72,15 +82,16 @@ export default function App() {
       }
       await res.json();
       setDone(true);
-      // 완료 메시지를 잠깐 보여준 뒤, 팀 전체 메인페이지로 완전히 이동
       setTimeout(() => {
         window.location.href = MAIN_PAGE_URL;
       }, 1500);
     } catch (e) {
       setError(e.message || "플랜 생성 중 오류가 발생했습니다.");
-      setStep(4);
+      navigate("/availability");
     }
   };
+
+  const currentStepIndex = STEP_ROUTES.findIndex((r) => r.path === location.pathname);
 
   return (
     <div style={s.page}>
@@ -90,9 +101,9 @@ export default function App() {
       </div>
 
       <div style={s.stepBar}>
-        {STEP_LABELS.map((label, i) => (
-          <span key={label} style={s.stepPill(step === i + 1)}>
-            {i + 1}. {label}
+        {STEP_ROUTES.map((r, i) => (
+          <span key={r.path} style={s.stepPill(i === currentStepIndex)}>
+            {i + 1}. {r.label}
           </span>
         ))}
       </div>
@@ -100,14 +111,34 @@ export default function App() {
       {error && <p style={s.errorText}>{error}</p>}
 
       <div style={s.card}>
-        {step === 1 && <UploadScreen onParsed={handleParsed} />}
-        {step === 2 && (
-          <SelectUnitsScreen parsedToc={parsedToc} onNext={handleUnitsSelected} onBack={() => setStep(1)} />
-        )}
-        {step === 3 && <CalendarScreen onNext={handleCalendarNext} onBack={() => setStep(2)} />}
-        {step === 4 && <AvailabilityScreen onNext={handleAvailabilityNext} onBack={() => setStep(3)} />}
-        {step === 5 && <GeneratingScreen done={done} />}
+        <Routes>
+          <Route path="/upload" element={<UploadScreen onParsed={handleParsed} />} />
+          <Route
+            path="/select"
+            element={
+              <SelectUnitsScreen parsedToc={parsedToc} onNext={handleUnitsSelected} onBack={() => navigate("/upload")} />
+            }
+          />
+          <Route
+            path="/calendar"
+            element={<CalendarScreen onNext={handleCalendarNext} onBack={() => navigate("/select")} />}
+          />
+          <Route
+            path="/availability"
+            element={<AvailabilityScreen onNext={handleAvailabilityNext} onBack={() => navigate("/calendar")} />}
+          />
+          <Route path="/generating" element={<GeneratingScreen done={done} />} />
+          <Route path="*" element={<Navigate to="/upload" replace />} />
+        </Routes>
       </div>
     </div>
+  );
+}
+
+export default function App() {
+  return (
+    <BrowserRouter>
+      <AppRoutes />
+    </BrowserRouter>
   );
 }
