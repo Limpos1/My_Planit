@@ -31,17 +31,22 @@ const page = {
   fontFamily: theme.font,
   color: theme.colors.text,
 };
-const stickyHeader = {
-  position: "sticky",
-  top: 0,
-  zIndex: 10,
-};
 const topbar = {
   display: "flex",
   alignItems: "center",
   justifyContent: "space-between",
   padding: "16px 28px",
+  background: "#fff",
   borderBottom: `1px solid ${theme.colors.border}`,
+  position: "sticky",
+  top: 0,
+  zIndex: 10,
+};
+const hamburgerRow = {
+  padding: "8px 28px",
+  borderBottom: `1px solid ${theme.colors.border}`,
+  background: theme.colors.bg,
+  textAlign: "left",
 };
 const hamburgerBtn = {
   border: "none",
@@ -66,6 +71,30 @@ const layout = {
   margin: "0 auto",
   alignItems: "start",
 };
+const s_btnSecondary = {
+  fontFamily: theme.font,
+  background: "#fff",
+  color: theme.colors.text,
+  border: `1px solid ${theme.colors.border}`,
+  borderRadius: theme.radius.pill,
+  padding: "6px 14px",
+  fontSize: 13,
+  fontWeight: 700,
+  cursor: "pointer",
+};
+function s_btnPrimary(disabled) {
+  return {
+    fontFamily: theme.font,
+    background: disabled ? theme.colors.disabled : theme.colors.primary,
+    color: "#fff",
+    border: "none",
+    borderRadius: theme.radius.pill,
+    padding: "12px 0",
+    fontSize: 14,
+    fontWeight: 700,
+    cursor: disabled ? "not-allowed" : "pointer",
+  };
+}
 
 export default function MainScreen() {
   const [plan, setPlan] = useState(null);
@@ -76,7 +105,7 @@ export default function MainScreen() {
 
   const userId = localStorage.getItem("userId") || "guest"; // TODO: 로그인 붙으면 이 fallback 제거
 
-  const loadPlan = () => {
+  useEffect(() => {
     fetch(`${API_BASE}/plans/${userId}`)
       .then((res) => {
         if (!res.ok) throw new Error("저장된 학습 플랜이 없습니다.");
@@ -87,10 +116,6 @@ export default function MainScreen() {
         setError("");
       })
       .catch((e) => setError(e.message));
-  };
-
-  useEffect(() => {
-    loadPlan();
   }, []);
 
   const planByDate = useMemo(() => {
@@ -144,8 +169,10 @@ export default function MainScreen() {
   if (error) {
     return (
       <div style={page}>
-        <div style={topbar}>
-          <strong>Planit</strong>
+        <div style={stickyHeader}>
+          <div style={topbar}>
+            <strong>Planit</strong>
+          </div>
         </div>
         <p style={{ padding: 28, color: theme.colors.danger }}>{error}</p>
       </div>
@@ -154,8 +181,10 @@ export default function MainScreen() {
   if (!plan) {
     return (
       <div style={page}>
-        <div style={topbar}>
-          <strong>Planit</strong>
+        <div style={stickyHeader}>
+          <div style={topbar}>
+            <strong>Planit</strong>
+          </div>
         </div>
         <p style={{ padding: 28, color: theme.colors.textSoft }}>학습 플랜을 불러오는 중...</p>
       </div>
@@ -186,21 +215,20 @@ export default function MainScreen() {
 
   return (
     <div style={page}>
-    <div style={stickyHeader}>
-      <div style={topbar}>
-        <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
-          <strong style={{ fontSize: 18 }}>Planit</strong>
+        <div style={topbar}>
+          <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
+            <strong style={{ fontSize: 18 }}>Planit</strong>
+          </div>
+          <div style={{ display: "flex", gap: 20 }}>
+            {/* TODO: 로그인 파트와 연결 — 로그아웃/마이페이지 */}
+            <span style={topMenuLink}>마이페이지</span>
+            <span style={topMenuLink}>로그아웃</span>
+          </div>
         </div>
-        <div style={{ display: "flex", gap: 20 }}>
-          {/* TODO: 로그인 파트와 연결 — 로그아웃/마이페이지 */}
-          <span style={topMenuLink}>마이페이지</span>
-          <span style={topMenuLink}>로그아웃</span>
+        <div style={hamburgerRow}>
+          {/* TODO: 사이드 메뉴 내용은 팀과 협의 후 구현 */}
+          <button style={hamburgerBtn} title="메뉴">☰</button>
         </div>
-      </div>
-      <div style={{ padding: "8px 28px", borderBottom: `1px solid ${theme.colors.border}`, background: theme.colors.bg }}>
-  <button style={hamburgerBtn} title="메뉴">☰</button>
-</div>
-      </div>
 
       <div style={layout}>
         <div style={{ background: "#fff", border: `1px solid ${theme.colors.border}`, borderRadius: theme.radius.lg, padding: 24, boxShadow: theme.shadow }}>
@@ -335,29 +363,4 @@ export default function MainScreen() {
       </div>
     </div>
   );
-}
-
-const s_btnSecondary = {
-  fontFamily: theme.font,
-  background: "#fff",
-  color: theme.colors.text,
-  border: `1px solid ${theme.colors.border}`,
-  borderRadius: theme.radius.pill,
-  padding: "6px 14px",
-  fontSize: 13,
-  fontWeight: 700,
-  cursor: "pointer",
-};
-function s_btnPrimary(disabled) {
-  return {
-    fontFamily: theme.font,
-    background: disabled ? theme.colors.disabled : theme.colors.primary,
-    color: "#fff",
-    border: "none",
-    borderRadius: theme.radius.pill,
-    padding: "12px 0",
-    fontSize: 14,
-    fontWeight: 700,
-    cursor: disabled ? "not-allowed" : "pointer",
-  };
 }
