@@ -42,13 +42,11 @@ const topbar = {
   top: 0,
   zIndex: 10,
 };
-const hamburgerRow = {
-  padding: "8px 28px",
-  borderBottom: `1px solid ${theme.colors.border}`,
-  background: theme.colors.bg,
-  textAlign: "left",
-};
 const hamburgerBtn = {
+  position: "fixed",
+  top: 64,
+  left: 28,
+  zIndex: 9,
   border: "none",
   background: "transparent",
   fontSize: 20,
@@ -169,11 +167,9 @@ export default function MainScreen() {
   if (error) {
     return (
       <div style={page}>
-        <div style={stickyHeader}>
           <div style={topbar}>
             <strong>Planit</strong>
           </div>
-        </div>
         <p style={{ padding: 28, color: theme.colors.danger }}>{error}</p>
       </div>
     );
@@ -181,11 +177,9 @@ export default function MainScreen() {
   if (!plan) {
     return (
       <div style={page}>
-        <div style={stickyHeader}>
           <div style={topbar}>
             <strong>Planit</strong>
           </div>
-        </div>
         <p style={{ padding: 28, color: theme.colors.textSoft }}>학습 플랜을 불러오는 중...</p>
       </div>
     );
@@ -225,10 +219,8 @@ export default function MainScreen() {
             <span style={topMenuLink}>로그아웃</span>
           </div>
         </div>
-        <div style={hamburgerRow}>
           {/* TODO: 사이드 메뉴 내용은 팀과 협의 후 구현 */}
           <button style={hamburgerBtn} title="메뉴">☰</button>
-        </div>
 
       <div style={layout}>
         <div style={{ background: "#fff", border: `1px solid ${theme.colors.border}`, borderRadius: theme.radius.lg, padding: 24, boxShadow: theme.shadow }}>
@@ -361,6 +353,8 @@ export default function MainScreen() {
           )}
         </div>
       </div>
+      {/* TEST ONLY: 스크롤 테스트용 — 확인 끝나면 이 div 지우세요 */}
+<div style={{ height: 2000, background: "linear-gradient(#F7F2FA, #E5DCF5)" }} />
     </div>
   );
 }
