@@ -62,11 +62,12 @@ const topMenuLink = {
 };
 const layout = {
   display: "grid",
-  gridTemplateColumns: "1.4fr 1fr",
+  gridTemplateColumns: "2.6fr 1fr",
   gap: 24,
-  padding: "28px",
-  maxWidth: 1080,
-  margin: "0 auto",
+  width: 1250,
+  marginLeft: 230,
+  marginTop: 28,
+  marginBottom: 28,
   alignItems: "start",
 };
 const s_btnSecondary = {
@@ -100,6 +101,8 @@ export default function MainScreen() {
   const [pendingProgress, setPendingProgress] = useState({});
   const [saving, setSaving] = useState(false);
   const [saveMsg, setSaveMsg] = useState("");
+  const [dragOverDate, setDragOverDate] = useState(null);
+  const [moveMsg, setMoveMsg] = useState("");
 
   const userId = localStorage.getItem("userId") || "guest"; // TODO: 로그인 붙으면 이 fallback 제거
 
@@ -164,12 +167,35 @@ export default function MainScreen() {
     }
   };
 
+  const handleDrop = async (targetDate, e) => {
+    e.preventDefault();
+    setDragOverDate(null);
+    const raw = e.dataTransfer.getData("text/plain");
+    if (!raw) return;
+    const { date: fromDate, index } = JSON.parse(raw);
+    if (fromDate === targetDate) return;
+
+    try {
+      const res = await fetch(`${API_BASE}/plans/${userId}/move-item`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ fromDate, itemIndex: index, toDate: targetDate }),
+      });
+      if (!res.ok) throw new Error("항목 이동에 실패했습니다.");
+      const updated = await res.json();
+      setPlan(updated);
+      setMoveMsg("");
+    } catch (e2) {
+      setMoveMsg(e2.message);
+    }
+  };
+
   if (error) {
     return (
       <div style={page}>
-          <div style={topbar}>
-            <strong>Planit</strong>
-          </div>
+        <div style={topbar}>
+          <strong>Planit</strong>
+        </div>
         <p style={{ padding: 28, color: theme.colors.danger }}>{error}</p>
       </div>
     );
@@ -177,9 +203,9 @@ export default function MainScreen() {
   if (!plan) {
     return (
       <div style={page}>
-          <div style={topbar}>
-            <strong>Planit</strong>
-          </div>
+        <div style={topbar}>
+          <strong>Planit</strong>
+        </div>
         <p style={{ padding: 28, color: theme.colors.textSoft }}>학습 플랜을 불러오는 중...</p>
       </div>
     );
@@ -209,36 +235,37 @@ export default function MainScreen() {
 
   return (
     <div style={page}>
-        <div style={topbar}>
-          <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
-            <strong style={{ fontSize: 18 }}>Planit</strong>
-          </div>
-          <div style={{ display: "flex", gap: 20 }}>
-            {/* TODO: 로그인 파트와 연결 — 로그아웃/마이페이지 */}
-            <span style={topMenuLink}>마이페이지</span>
-            <span style={topMenuLink}>로그아웃</span>
-          </div>
+      <div style={topbar}>
+        <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
+          <strong style={{ fontSize: 18 }}>Planit</strong>
         </div>
-          {/* TODO: 사이드 메뉴 내용은 팀과 협의 후 구현 */}
-          <button style={hamburgerBtn} title="메뉴">☰</button>
+        <div style={{ display: "flex", gap: 20 }}>
+          {/* TODO: 로그인 파트와 연결 — 로그아웃/마이페이지 */}
+          <span style={topMenuLink}>마이페이지</span>
+          <span style={topMenuLink}>로그아웃</span>
+        </div>
+      </div>
+      {/* TODO: 사이드 메뉴 내용은 팀과 협의 후 구현 */}
+      <button style={hamburgerBtn} title="메뉴">☰</button>
 
       <div style={layout}>
         <div style={{ background: "#fff", border: `1px solid ${theme.colors.border}`, borderRadius: theme.radius.lg, padding: 24, boxShadow: theme.shadow }}>
           <p style={{ color: theme.colors.textSoft, margin: "0 0 12px", fontSize: 14 }}>
-            총 {plan.totalPages}페이지 · 총 {plan.totalMinutes}분 배정
+            총 {plan.totalPages}페이지 · 총 {plan.totalMinutes}분 배정 · 항목을 다른 날짜로 드래그해서 옮길 수 있어요
           </p>
+          {moveMsg && <p style={{ color: theme.colors.danger, fontSize: 13, fontWeight: 600, margin: "0 0 12px" }}>{moveMsg}</p>}
 
           <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 16, marginBottom: 12 }}>
             <button onClick={goPrevMonth} style={s_btnSecondary}>◀</button>
-            <strong>{viewYear}년 {viewMonth + 1}월</strong>
+            <strong style={{ fontSize: 18 }}>{viewYear}년 {viewMonth + 1}월</strong>
             <button onClick={goNextMonth} style={s_btnSecondary}>▶</button>
           </div>
 
-          <table style={{ width: "100%", borderCollapse: "collapse" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", tableLayout: "fixed" }}>
             <thead>
               <tr>
                 {WEEKDAY_LABELS.map((w) => (
-                  <th key={w} style={{ padding: 6, color: theme.colors.textSoft, fontWeight: 500, fontSize: 13 }}>{w}</th>
+                  <th key={w} style={{ padding: 8, color: theme.colors.textSoft, fontWeight: 500, fontSize: 13 }}>{w}</th>
                 ))}
               </tr>
             </thead>
@@ -246,31 +273,67 @@ export default function MainScreen() {
               {Array.from({ length: Math.ceil(cells.length / 7) }, (_, row) => (
                 <tr key={row}>
                   {cells.slice(row * 7, row * 7 + 7).map((d, i) => {
-                    if (d === null) return <td key={i} />;
+                    if (d === null) return <td key={i} style={{ verticalAlign: "top", padding: 4 }} />;
                     const key = toKey(viewYear, viewMonth, d);
                     const day = planByDate[key];
-                    const totalPages = day ? day.items.reduce((sum, it) => sum + it.pagesToday, 0) : 0;
                     const isSelected = key === selectedDate;
                     const isToday = key === todayKey();
+                    const isDragOver = dragOverDate === key;
                     return (
-                      <td key={i} style={{ padding: 3, textAlign: "center" }}>
-                        <button
+                      <td key={i} style={{ verticalAlign: "top", padding: 4 }}>
+                        <div
                           onClick={() => day && setSelectedDate(key)}
-                          disabled={!day}
+                          onDragOver={(e) => {
+                            if (!day) return;
+                            e.preventDefault();
+                            setDragOverDate(key);
+                          }}
+                          onDragLeave={() => setDragOverDate((cur) => (cur === key ? null : cur))}
+                          onDrop={(e) => day && handleDrop(key, e)}
                           style={{
-                            width: "100%",
-                            padding: "8px 4px",
+                            minHeight: 78,
                             borderRadius: theme.radius.sm,
-                            border: isSelected ? `2px solid ${theme.colors.primary}` : isToday ? `1.5px solid ${theme.colors.primaryDark}` : `1px solid ${theme.colors.border}`,
-                            background: day ? (isSelected ? theme.colors.primarySoft : "#fff") : "#F7F4FA",
-                            color: day ? theme.colors.text : "#D8D3E0",
+                            border: isDragOver
+                              ? `2px dashed ${theme.colors.primary}`
+                              : isSelected
+                              ? `2px solid ${theme.colors.primary}`
+                              : isToday
+                              ? `1.5px solid ${theme.colors.primaryDark}`
+                              : `1px solid ${theme.colors.border}`,
+                            background: day ? (isDragOver ? theme.colors.primarySoft : isSelected ? "#FBF9FE" : "#fff") : "#F7F4FA",
+                            padding: 6,
                             cursor: day ? "pointer" : "default",
-                            fontFamily: theme.font,
                           }}
                         >
-                          <div>{d}</div>
-                          {day && <div style={{ fontSize: 11, color: theme.colors.primaryDark, fontWeight: 700 }}>{totalPages}p</div>}
-                        </button>
+                          <div style={{ fontSize: 13, fontWeight: 700, color: day ? theme.colors.text : "#D8D3E0", marginBottom: 4 }}>{d}</div>
+                          {day &&
+                            day.items.map((item, idx) => (
+                              <div
+                                key={idx}
+                                draggable
+                                onDragStart={(e) => {
+                                  e.stopPropagation();
+                                  e.dataTransfer.setData("text/plain", JSON.stringify({ date: key, index: idx }));
+                                }}
+                                title={item.title}
+                                style={{
+                                  background: theme.colors.primarySoft,
+                                  color: theme.colors.primaryDark,
+                                  borderRadius: 6,
+                                  padding: "3px 6px",
+                                  fontSize: 10.5,
+                                  fontWeight: 600,
+                                  marginBottom: 3,
+                                  cursor: "grab",
+                                  whiteSpace: "nowrap",
+                                  overflow: "hidden",
+                                  textOverflow: "ellipsis",
+                                }}
+                              >
+                                {item.title} · {item.pagesToday}p
+                              </div>
+                            ))}
+                        </div>
                       </td>
                     );
                   })}
@@ -314,7 +377,12 @@ export default function MainScreen() {
             ) : (
               todayItems.map((item, i) => (
                 <div key={i} style={{ marginBottom: 18 }}>
-                  <p style={{ margin: "0 0 8px", fontWeight: 600, fontSize: 14 }}>{item.title}</p>
+                  <p style={{ margin: "0 0 8px", fontWeight: 600, fontSize: 14 }}>
+                    {item.title}
+                    {item.pageRange && (
+                      <span style={{ color: theme.colors.primaryDark, fontWeight: 700 }}> · {item.pageRange}</span>
+                    )}
+                  </p>
                   <div style={{ display: "flex", gap: 6 }}>
                     {PROGRESS_STEPS.map((p) => {
                       const active = (pendingProgress[i] ?? 0) === p;
@@ -353,8 +421,6 @@ export default function MainScreen() {
           )}
         </div>
       </div>
-      {/* TEST ONLY: 스크롤 테스트용 — 확인 끝나면 이 div 지우세요 */}
-<div style={{ height: 2000, background: "linear-gradient(#F7F2FA, #E5DCF5)" }} />
     </div>
   );
 }

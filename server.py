@@ -157,6 +157,32 @@ async def update_progress(user_id: str, req: ProgressUpdateRequest):
     PLANS_STORE[user_id] = plan
     return plan
 
+class MoveItemRequest(BaseModel):
+    fromDate: str
+    itemIndex: int
+    toDate: str
+
+
+@app.post("/plans/{user_id}/move-item")
+async def move_item(user_id: str, req: MoveItemRequest):
+    """메인 달력에서 항목을 다른 날짜로 드래그해서 옮겼을 때 호출된다."""
+    plan = PLANS_STORE.get(user_id)
+    if plan is None:
+        raise HTTPException(status_code=404, detail="저장된 플랜이 없습니다.")
+
+    from_day = next((d for d in plan["days"] if d["date"] == req.fromDate), None)
+    to_day = next((d for d in plan["days"] if d["date"] == req.toDate), None)
+    if from_day is None or to_day is None:
+        raise HTTPException(status_code=404, detail="해당 날짜의 플랜이 없습니다.")
+    if req.itemIndex < 0 or req.itemIndex >= len(from_day["items"]):
+        raise HTTPException(status_code=400, detail="잘못된 항목 인덱스입니다.")
+
+    item = from_day["items"].pop(req.itemIndex)
+    to_day["items"].append(item)
+
+    PLANS_STORE[user_id] = plan
+    return plan
+
 @app.get("/health")
 async def health():
     """React 쪽에서 서버가 켜져있는지 확인할 때 쓸 수 있는 간단한 상태 체크용."""
