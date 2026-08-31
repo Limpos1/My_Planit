@@ -1,9 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
 import { theme } from "../theme";
+import QuizGate from "./QuizGate";
+import TodayProgressPanel from "./TodayProgressPanel";
 
 const API_BASE = "http://localhost:8000";
 const WEEKDAY_LABELS = ["일", "월", "화", "수", "목", "금", "토"];
-const PROGRESS_STEPS = [25, 50, 75, 100];
+const DAY_CELL_HEIGHT = 150;
 
 function toKey(y, m, d) {
   return `${y}-${String(m + 1).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
@@ -87,19 +89,6 @@ const s_btnSecondary = {
   fontWeight: 700,
   cursor: "pointer",
 };
-function s_btnPrimary(disabled) {
-  return {
-    fontFamily: theme.font,
-    background: disabled ? theme.colors.disabled : theme.colors.primary,
-    color: "#fff",
-    border: "none",
-    borderRadius: theme.radius.pill,
-    padding: "12px 0",
-    fontSize: 14,
-    fontWeight: 700,
-    cursor: disabled ? "not-allowed" : "pointer",
-  };
-}
 
 export default function MainScreen() {
   const [plan, setPlan] = useState(null);
@@ -109,6 +98,7 @@ export default function MainScreen() {
   const [saveMsg, setSaveMsg] = useState("");
   const [dragOverDate, setDragOverDate] = useState(null);
   const [moveMsg, setMoveMsg] = useState("");
+  const [showQuiz, setShowQuiz] = useState(false);
 
   const [stopwatchSeconds, setStopwatchSeconds] = useState(0);
   const [stopwatchRunning, setStopwatchRunning] = useState(false);
@@ -182,6 +172,10 @@ export default function MainScreen() {
     }
   };
 
+  const handleCompleteClick = () => {
+    setShowQuiz(true);
+  };
+
   const handleDrop = async (targetDate, e) => {
     e.preventDefault();
     setDragOverDate(null);
@@ -247,6 +241,7 @@ export default function MainScreen() {
   };
 
   const selectedDay = selectedDate ? planByDate[selectedDate] : null;
+  const todaySubjectTitle = todayItems.map((it) => it.title).join(", ") || "오늘의 학습";
 
   return (
     <div style={page}>
@@ -306,7 +301,9 @@ export default function MainScreen() {
                           onDragLeave={() => setDragOverDate((cur) => (cur === key ? null : cur))}
                           onDrop={(e) => day && handleDrop(key, e)}
                           style={{
-                            minHeight: 78,
+                            height: DAY_CELL_HEIGHT,
+                            display: "flex",
+                            flexDirection: "column",
                             borderRadius: theme.radius.sm,
                             border: isDragOver
                               ? `2px dashed ${theme.colors.primary}`
@@ -320,34 +317,38 @@ export default function MainScreen() {
                             cursor: day ? "pointer" : "default",
                           }}
                         >
-                          <div style={{ fontSize: 13, fontWeight: 700, color: day ? theme.colors.text : "#D8D3E0", marginBottom: 4 }}>{d}</div>
-                          {day &&
-                            day.items.map((item, idx) => (
-                              <div
-                                key={idx}
-                                draggable
-                                onDragStart={(e) => {
-                                  e.stopPropagation();
-                                  e.dataTransfer.setData("text/plain", JSON.stringify({ date: key, index: idx }));
-                                }}
-                                title={item.title}
-                                style={{
-                                  background: theme.colors.primarySoft,
-                                  color: theme.colors.primaryDark,
-                                  borderRadius: 6,
-                                  padding: "3px 6px",
-                                  fontSize: 10.5,
-                                  fontWeight: 600,
-                                  marginBottom: 3,
-                                  cursor: "grab",
-                                  whiteSpace: "nowrap",
-                                  overflow: "hidden",
-                                  textOverflow: "ellipsis",
-                                }}
-                              >
-                                {item.title} · {item.pagesToday}p
-                              </div>
-                            ))}
+                          <div style={{ fontSize: 13, fontWeight: 700, color: day ? theme.colors.text : "#D8D3E0", marginBottom: 4, flexShrink: 0 }}>
+                            {d}
+                          </div>
+                          <div style={{ overflowY: "auto", flex: 1, minHeight: 0 }}>
+                            {day &&
+                              day.items.map((item, idx) => (
+                                <div
+                                  key={idx}
+                                  draggable
+                                  onDragStart={(e) => {
+                                    e.stopPropagation();
+                                    e.dataTransfer.setData("text/plain", JSON.stringify({ date: key, index: idx }));
+                                  }}
+                                  title={item.title}
+                                  style={{
+                                    background: theme.colors.primarySoft,
+                                    color: theme.colors.primaryDark,
+                                    borderRadius: 6,
+                                    padding: "3px 6px",
+                                    fontSize: 10.5,
+                                    fontWeight: 600,
+                                    marginBottom: 3,
+                                    cursor: "grab",
+                                    whiteSpace: "nowrap",
+                                    overflow: "hidden",
+                                    textOverflow: "ellipsis",
+                                  }}
+                                >
+                                  {item.title} · {item.pagesToday}p
+                                </div>
+                              ))}
+                          </div>
                         </div>
                       </td>
                     );
@@ -381,7 +382,12 @@ export default function MainScreen() {
             )}
           </div>
 
-          <button onClick={() => downloadJson(plan)} style={{ ...s_btnSecondary, marginTop: 16 }}>JSON으로 저장</button>
+          <div style={{ display: "flex", gap: 8, marginTop: 16 }}>
+            <button onClick={() => downloadJson(plan)} style={s_btnSecondary}>JSON으로 저장</button>
+            <button onClick={() => (window.location.href = "/calendar")} style={s_btnSecondary}>
+              계획 다시 생성하기
+            </button>
+          </div>
         </div>
 
         <div style={{ background: "#fff", border: `1px solid ${theme.colors.border}`, borderRadius: theme.radius.lg, boxShadow: theme.shadow, display: "flex", flexDirection: "column" }}>
@@ -391,10 +397,7 @@ export default function MainScreen() {
               {formatStopwatch(stopwatchSeconds)}
             </div>
             <div style={{ display: "flex", gap: 8, justifyContent: "center" }}>
-              <button
-                onClick={() => setStopwatchRunning((r) => !r)}
-                style={s_btnSecondary}
-              >
+              <button onClick={() => setStopwatchRunning((r) => !r)} style={s_btnSecondary}>
                 {stopwatchRunning ? "중단" : "시작"}
               </button>
               <button
@@ -409,57 +412,28 @@ export default function MainScreen() {
             </div>
           </div>
 
-          <div style={{ padding: 20, flex: 1 }}>
-            <h3 style={{ margin: "0 0 12px", fontSize: 16 }}>오늘 할 일</h3>
-            {todayItems.length === 0 ? (
-              <p style={{ color: theme.colors.textSoft, fontSize: 14 }}>오늘 배정된 학습 항목이 없어요.</p>
-            ) : (
-              todayItems.map((item, i) => (
-                <div key={i} style={{ marginBottom: 18 }}>
-                  <p style={{ margin: "0 0 8px", fontWeight: 600, fontSize: 14 }}>
-                    {item.title}
-                    {item.pageRange && (
-                      <span style={{ color: theme.colors.primaryDark, fontWeight: 700 }}> · {item.pageRange}</span>
-                    )}
-                  </p>
-                  <div style={{ display: "flex", gap: 6 }}>
-                    {PROGRESS_STEPS.map((p) => {
-                      const active = (pendingProgress[i] ?? 0) === p;
-                      return (
-                        <button
-                          key={p}
-                          onClick={() => setPendingProgress((prev) => ({ ...prev, [i]: p }))}
-                          style={{
-                            flex: 1,
-                            padding: "6px 0",
-                            borderRadius: theme.radius.pill,
-                            border: active ? "none" : `1px solid ${theme.colors.border}`,
-                            background: active ? theme.colors.primary : "#fff",
-                            color: active ? "#fff" : theme.colors.textSoft,
-                            fontSize: 12,
-                            fontWeight: 700,
-                            cursor: "pointer",
-                          }}
-                        >
-                          {p}%
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-              ))
-            )}
-          </div>
-          {todayItems.length > 0 && (
-            <div style={{ borderTop: `1px solid ${theme.colors.border}`, padding: 16 }}>
-              {saveMsg && <p style={{ fontSize: 12, color: theme.colors.primaryDark, margin: "0 0 8px" }}>{saveMsg}</p>}
-              <button onClick={handleComplete} disabled={saving} style={{ ...s_btnPrimary(saving), width: "100%" }}>
-                {saving ? "저장 중..." : "완료하기"}
-              </button>
-            </div>
-          )}
+          {/* 여기부터는 원래 "진도 관리" 담당 팀원 파트 — TodayProgressPanel.jsx 참고 */}
+          <TodayProgressPanel
+            items={todayItems}
+            pendingProgress={pendingProgress}
+            onSelectProgress={(i, p) => setPendingProgress((prev) => ({ ...prev, [i]: p }))}
+            onComplete={handleCompleteClick}
+            saving={saving}
+            saveMsg={saveMsg}
+          />
         </div>
       </div>
+
+      {showQuiz && (
+        <QuizGate
+          subjectTitle={todaySubjectTitle}
+          onPass={() => {
+            setShowQuiz(false);
+            handleComplete();
+          }}
+          onCancel={() => setShowQuiz(false)}
+        />
+      )}
     </div>
   );
 }
