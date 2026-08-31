@@ -1,11 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
 import { theme } from "../theme";
-import QuizGate from "./QuizGate";
-import TodayProgressPanel from "./TodayProgressPanel";
 
 const API_BASE = "http://localhost:8000";
 const WEEKDAY_LABELS = ["일", "월", "화", "수", "목", "금", "토"];
-const DAY_CELL_HEIGHT = 150;
+const PROGRESS_STEPS = [25, 50, 75, 100];
+const DAY_CELL_HEIGHT = 168;
 
 function toKey(y, m, d) {
   return `${y}-${String(m + 1).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
@@ -70,10 +69,10 @@ const topMenuLink = {
 };
 const layout = {
   display: "grid",
-  gridTemplateColumns: "2.6fr 1fr",
+  gridTemplateColumns: "minmax(0, 1090px) 320px",
   gap: 24,
-  width: 1250,
-  marginLeft: 160,
+  width: 1450,
+  marginLeft: 100,
   marginTop: 28,
   marginBottom: 28,
   alignItems: "start",
@@ -89,7 +88,20 @@ const s_btnSecondary = {
   fontWeight: 700,
   cursor: "pointer",
 };
-
+function s_btnPrimary(disabled) {
+  return {
+    fontFamily: theme.font,
+    background: disabled ? theme.colors.disabled : theme.colors.primary,
+    color: "#fff",
+    border: "none",
+    borderRadius: theme.radius.pill,
+    padding: "12px 0",
+    fontSize: 14,
+    fontWeight: 700,
+    cursor: disabled ? "not-allowed" : "pointer",
+    width: "100%",
+  };
+}
 export default function MainScreen() {
   const [plan, setPlan] = useState(null);
   const [error, setError] = useState("");
@@ -98,7 +110,6 @@ export default function MainScreen() {
   const [saveMsg, setSaveMsg] = useState("");
   const [dragOverDate, setDragOverDate] = useState(null);
   const [moveMsg, setMoveMsg] = useState("");
-  const [showQuiz, setShowQuiz] = useState(false);
 
   const [stopwatchSeconds, setStopwatchSeconds] = useState(0);
   const [stopwatchRunning, setStopwatchRunning] = useState(false);
@@ -149,6 +160,7 @@ export default function MainScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [plan]);
 
+  // TODO(팀원 연동): 완료하기를 누르면 진도율 저장 + (나중에) 팀원이 만든 퀴즈를 여기서 띄우면 됨
   const handleComplete = async () => {
     setSaving(true);
     setSaveMsg("");
@@ -170,10 +182,6 @@ export default function MainScreen() {
     } finally {
       setSaving(false);
     }
-  };
-
-  const handleCompleteClick = () => {
-    setShowQuiz(true);
   };
 
   const handleDrop = async (targetDate, e) => {
@@ -241,7 +249,6 @@ export default function MainScreen() {
   };
 
   const selectedDay = selectedDate ? planByDate[selectedDate] : null;
-  const todaySubjectTitle = todayItems.map((it) => it.title).join(", ") || "오늘의 학습";
 
   return (
     <div style={page}>
@@ -317,7 +324,7 @@ export default function MainScreen() {
                             cursor: day ? "pointer" : "default",
                           }}
                         >
-                          <div style={{ fontSize: 13, fontWeight: 700, color: day ? theme.colors.text : "#D8D3E0", marginBottom: 4, flexShrink: 0 }}>
+                          <div style={{ fontSize: 14, fontWeight: 700, color: day ? theme.colors.text : "#D8D3E0", marginBottom: 5, flexShrink: 0 }}>
                             {d}
                           </div>
                           <div style={{ overflowY: "auto", flex: 1, minHeight: 0 }}>
@@ -335,10 +342,10 @@ export default function MainScreen() {
                                     background: theme.colors.primarySoft,
                                     color: theme.colors.primaryDark,
                                     borderRadius: 6,
-                                    padding: "3px 6px",
-                                    fontSize: 10.5,
+                                    padding: "4px 7px",
+                                    fontSize: 12.5,
                                     fontWeight: 600,
-                                    marginBottom: 3,
+                                    marginBottom: 4,
                                     cursor: "grab",
                                     whiteSpace: "nowrap",
                                     overflow: "hidden",
@@ -412,28 +419,58 @@ export default function MainScreen() {
             </div>
           </div>
 
-          {/* 여기부터는 원래 "진도 관리" 담당 팀원 파트 — TodayProgressPanel.jsx 참고 */}
-          <TodayProgressPanel
-            items={todayItems}
-            pendingProgress={pendingProgress}
-            onSelectProgress={(i, p) => setPendingProgress((prev) => ({ ...prev, [i]: p }))}
-            onComplete={handleCompleteClick}
-            saving={saving}
-            saveMsg={saveMsg}
-          />
+          {/* 여기부터 원래 "진도 관리" 담당 팀원 파트 (지금은 임시 버전으로 인라인 구현) */}
+          <div style={{ padding: 20, flex: 1 }}>
+            <h3 style={{ margin: "0 0 12px", fontSize: 16 }}>오늘 할 일</h3>
+            {todayItems.length === 0 ? (
+              <p style={{ color: theme.colors.textSoft, fontSize: 14 }}>오늘 배정된 학습 항목이 없어요.</p>
+            ) : (
+              todayItems.map((item, i) => (
+                <div key={i} style={{ marginBottom: 18 }}>
+                  <p style={{ margin: "0 0 8px", fontWeight: 600, fontSize: 14 }}>
+                    {item.title}
+                    {item.pageRange && (
+                      <span style={{ color: theme.colors.primaryDark, fontWeight: 700 }}> · {item.pageRange}</span>
+                    )}
+                  </p>
+                  <div style={{ display: "flex", gap: 6 }}>
+                    {PROGRESS_STEPS.map((p) => {
+                      const active = (pendingProgress[i] ?? 0) === p;
+                      return (
+                        <button
+                          key={p}
+                          onClick={() => setPendingProgress((prev) => ({ ...prev, [i]: p }))}
+                          style={{
+                            flex: 1,
+                            padding: "6px 0",
+                            borderRadius: theme.radius.pill,
+                            border: active ? "none" : `1px solid ${theme.colors.border}`,
+                            background: active ? theme.colors.primary : "#fff",
+                            color: active ? "#fff" : theme.colors.textSoft,
+                            fontSize: 12,
+                            fontWeight: 700,
+                            cursor: "pointer",
+                          }}
+                        >
+                          {p}%
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+          {todayItems.length > 0 && (
+            <div style={{ borderTop: `1px solid ${theme.colors.border}`, padding: 16 }}>
+              {saveMsg && <p style={{ fontSize: 12, color: theme.colors.primaryDark, margin: "0 0 8px" }}>{saveMsg}</p>}
+              <button onClick={handleComplete} disabled={saving} style={s_btnPrimary(saving)}>
+                {saving ? "저장 중..." : "완료하기"}
+              </button>
+            </div>
+          )}
         </div>
       </div>
-
-      {showQuiz && (
-        <QuizGate
-          subjectTitle={todaySubjectTitle}
-          onPass={() => {
-            setShowQuiz(false);
-            handleComplete();
-          }}
-          onCancel={() => setShowQuiz(false)}
-        />
-      )}
     </div>
   );
 }
