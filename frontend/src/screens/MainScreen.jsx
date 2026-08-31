@@ -12,6 +12,12 @@ function todayKey() {
   const t = new Date();
   return toKey(t.getFullYear(), t.getMonth(), t.getDate());
 }
+function formatStopwatch(totalSeconds) {
+  const h = String(Math.floor(totalSeconds / 3600)).padStart(2, "0");
+  const m = String(Math.floor((totalSeconds % 3600) / 60)).padStart(2, "0");
+  const s = String(totalSeconds % 60).padStart(2, "0");
+  return `${h}:${m}:${s}`;
+}
 
 function downloadJson(plan) {
   const blob = new Blob([JSON.stringify(plan, null, 2)], { type: "application/json" });
@@ -65,7 +71,7 @@ const layout = {
   gridTemplateColumns: "2.6fr 1fr",
   gap: 24,
   width: 1250,
-  marginLeft: 230,
+  marginLeft: 160,
   marginTop: 28,
   marginBottom: 28,
   alignItems: "start",
@@ -103,6 +109,15 @@ export default function MainScreen() {
   const [saveMsg, setSaveMsg] = useState("");
   const [dragOverDate, setDragOverDate] = useState(null);
   const [moveMsg, setMoveMsg] = useState("");
+
+  const [stopwatchSeconds, setStopwatchSeconds] = useState(0);
+  const [stopwatchRunning, setStopwatchRunning] = useState(false);
+
+  useEffect(() => {
+    if (!stopwatchRunning) return;
+    const id = setInterval(() => setStopwatchSeconds((s) => s + 1), 1000);
+    return () => clearInterval(id);
+  }, [stopwatchRunning]);
 
   const userId = localStorage.getItem("userId") || "guest"; // TODO: 로그인 붙으면 이 fallback 제거
 
@@ -370,6 +385,30 @@ export default function MainScreen() {
         </div>
 
         <div style={{ background: "#fff", border: `1px solid ${theme.colors.border}`, borderRadius: theme.radius.lg, boxShadow: theme.shadow, display: "flex", flexDirection: "column" }}>
+          <div style={{ padding: "20px 20px 0", textAlign: "center", borderBottom: `1px solid ${theme.colors.border}`, paddingBottom: 16 }}>
+            {/* TODO: "완료하기" 누를 때 이 경과 시간(stopwatchSeconds)도 같이 서버로 전송 */}
+            <div style={{ fontSize: 32, fontWeight: 800, fontFamily: "monospace", letterSpacing: 1, marginBottom: 10 }}>
+              {formatStopwatch(stopwatchSeconds)}
+            </div>
+            <div style={{ display: "flex", gap: 8, justifyContent: "center" }}>
+              <button
+                onClick={() => setStopwatchRunning((r) => !r)}
+                style={s_btnSecondary}
+              >
+                {stopwatchRunning ? "중단" : "시작"}
+              </button>
+              <button
+                onClick={() => {
+                  setStopwatchRunning(false);
+                  setStopwatchSeconds(0);
+                }}
+                style={s_btnSecondary}
+              >
+                초기화
+              </button>
+            </div>
+          </div>
+
           <div style={{ padding: 20, flex: 1 }}>
             <h3 style={{ margin: "0 0 12px", fontSize: 16 }}>오늘 할 일</h3>
             {todayItems.length === 0 ? (
