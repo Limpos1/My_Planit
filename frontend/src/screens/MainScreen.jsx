@@ -41,7 +41,6 @@ const page = {
   background: theme.colors.bg,
   fontFamily: theme.font,
   color: theme.colors.text,
-  overflowX: "hidden", // 페이지 자체는 가로로 안 밀리게 - 상단바가 스크롤에 안 끌려가도록
 };
 const topbar = {
   display: "flex",
@@ -265,7 +264,9 @@ export default function MainScreen() {
     setViewYear(y);
   };
 
-  const selectedDay = selectedDate ? planByDate[selectedDate] : null;
+  const selectedDay = selectedDate
+    ? planByDate[selectedDate] || { date: selectedDate, minutes: 0, items: [] }
+    : null;
   const totalItems = (plan.days || []).reduce((sum, d) => sum + d.items.length, 0);
   const totalMinutes = (plan.days || []).reduce((sum, d) => sum + d.minutes, 0);
 
@@ -312,21 +313,23 @@ export default function MainScreen() {
                   {cells.slice(row * 7, row * 7 + 7).map((d, i) => {
                     if (d === null) return <td key={i} style={{ verticalAlign: "top", padding: 4 }} />;
                     const key = toKey(viewYear, viewMonth, d);
-                    const day = planByDate[key];
+                    // 플랜에 항목이 하나도 없는 날짜는 응답에서 아예 빠지므로(팀원 API 특성),
+                    // 여기서 빈 날짜로 채워서 항상 선택/드롭 가능하게 한다 - 그래야 마지막
+                    // 항목까지 다른 날로 옮긴 뒤에도 그 날짜가 "비활성화"되지 않는다.
+                    const day = planByDate[key] || { date: key, minutes: 0, items: [] };
                     const isSelected = key === selectedDate;
                     const isToday = key === todayKey();
                     const isDragOver = dragOverDate === key;
                     return (
                       <td key={i} style={{ verticalAlign: "top", padding: 4 }}>
                         <div
-                          onClick={() => day && setSelectedDate(key)}
+                          onClick={() => setSelectedDate(key)}
                           onDragOver={(e) => {
-                            if (!day) return;
                             e.preventDefault();
                             setDragOverDate(key);
                           }}
                           onDragLeave={() => setDragOverDate((cur) => (cur === key ? null : cur))}
-                          onDrop={(e) => day && handleDrop(key, e)}
+                          onDrop={(e) => handleDrop(key, e)}
                           style={{
                             height: DAY_CELL_HEIGHT,
                             display: "flex",
@@ -339,17 +342,16 @@ export default function MainScreen() {
                               : isToday
                               ? `1.5px solid ${theme.colors.primaryDark}`
                               : `1px solid ${theme.colors.border}`,
-                            background: day ? (isDragOver ? theme.colors.primarySoft : isSelected ? "#FBF9FE" : "#fff") : "#F7F4FA",
+                            background: isDragOver ? theme.colors.primarySoft : isSelected ? "#FBF9FE" : "#fff",
                             padding: 6,
-                            cursor: day ? "pointer" : "default",
+                            cursor: "pointer",
                           }}
                         >
-                          <div style={{ fontSize: 14, fontWeight: 700, color: day ? theme.colors.text : "#D8D3E0", marginBottom: 5, flexShrink: 0 }}>
+                          <div style={{ fontSize: 14, fontWeight: 700, color: theme.colors.text, marginBottom: 5, flexShrink: 0 }}>
                             {d}
                           </div>
                           <div style={{ overflowY: "auto", flex: 1, minHeight: 0 }}>
-                            {day &&
-                              day.items.map((item) => (
+                            {day.items.map((item) => (
                                 <div
                                   key={item.id}
                                   draggable
