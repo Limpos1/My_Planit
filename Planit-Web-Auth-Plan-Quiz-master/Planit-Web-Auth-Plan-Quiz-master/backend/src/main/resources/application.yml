@@ -1,0 +1,12 @@
+spring:
+  application:
+    name: planit
+
+# 방식 B: 데이터는 Spring 이 Firebase Admin SDK 로 Firestore 에 저장한다. MySQL/JPA 없음.
+# 서비스 계정 키는 src/main/resources/firebase-service-account.json (커밋 금지, .gitignore 참고).
+
+server:
+  port: 8080
+  servlet:
+    session:
+      timeout: 7d   # 로그인 세션 유지 기간

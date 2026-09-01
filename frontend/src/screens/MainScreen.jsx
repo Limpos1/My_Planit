@@ -41,6 +41,7 @@ const page = {
   background: theme.colors.bg,
   fontFamily: theme.font,
   color: theme.colors.text,
+  overflowX: "hidden", // 페이지 자체는 가로로 안 밀리게 - 상단바가 스크롤에 안 끌려가도록
 };
 const topbar = {
   display: "flex",
@@ -70,6 +71,11 @@ const topMenuLink = {
   fontSize: 13,
   fontWeight: 600,
   cursor: "pointer",
+};
+const layoutScroll = {
+  // layout이 화면보다 넓을 때 이 안에서만 가로 스크롤되게 하고, 상단바는 그대로 고정해둔다
+  width: "100%",
+  overflowX: "auto",
 };
 const layout = {
   display: "grid",
@@ -278,6 +284,7 @@ export default function MainScreen() {
       {/* TODO: 사이드 메뉴 내용은 팀과 협의 후 구현 */}
       <button style={hamburgerBtn} title="메뉴">☰</button>
 
+      <div style={layoutScroll}>
       <div style={layout}>
         <div style={{ background: "#fff", border: `1px solid ${theme.colors.border}`, borderRadius: theme.radius.lg, padding: 24, boxShadow: theme.shadow }}>
           <p style={{ color: theme.colors.textSoft, margin: "0 0 12px", fontSize: 14 }}>
@@ -483,6 +490,7 @@ export default function MainScreen() {
             </div>
           )}
         </div>
+      </div>
       </div>
     </div>
   );
