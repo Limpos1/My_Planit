@@ -37,7 +37,7 @@ public class StudyPlanItemService {
      * REQ-F-050~054: 오늘(또는 지정한 날짜)의 학습 계획 리스트 + 오늘 진행률 + 마무리 여부 조회.
      * 오늘 진행률은 그날 항목들의 progressRate 단순 평균을 반올림한 값입니다.
      */
-    public TodayPlanResponse getTodayPlan(Long memberId, LocalDate date) {
+    public TodayPlanResponse getTodayPlan(String memberId, LocalDate date) {
         LocalDate targetDate = (date != null) ? date : LocalDate.now();
         List<StudyPlanItem> items = studyPlanItemRepository.findByMemberIdAndPlanDate(memberId, targetDate);
 
@@ -59,7 +59,7 @@ public class StudyPlanItemService {
     /**
      * REQ-F-050~054: 항목별 진행률 체크(0/25/50/75/100). 본인 소유 항목이 아니면 거부합니다.
      */
-    public StudyPlanItemResponse updateProgress(Long memberId, String itemId, int progressRate) {
+    public StudyPlanItemResponse updateProgress(String memberId, String itemId, int progressRate) {
         if (!ALLOWED_PROGRESS_RATES.contains(progressRate)) {
             throw new CustomException(ErrorCode.INVALID_PROGRESS_RATE);
         }
@@ -81,7 +81,7 @@ public class StudyPlanItemService {
      * (부득이하게 일부만 했더라도) 완료 기록을 남길 수 있습니다.
      * 이미 완료 기록이 있으면 새로 만들지 않고 기존 기록을 그대로 반환합니다(하루 1회).
      */
-    public DayCompletionResponse completeToday(Long memberId, LocalDate date) {
+    public DayCompletionResponse completeToday(String memberId, LocalDate date) {
         LocalDate targetDate = (date != null) ? date : LocalDate.now();
         List<StudyPlanItem> items = studyPlanItemRepository.findByMemberIdAndPlanDate(memberId, targetDate);
 

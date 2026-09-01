@@ -37,7 +37,8 @@ public class StudyPlanItem {
     /** Firestore 문서 id. 문서 데이터 자체에는 저장하지 않습니다. */
     private String id;
 
-    private Long memberId;
+    /** Firebase Auth uid (문자열). 로그인 파트가 세션에 저장하는 값과 동일하게 맞춘다. */
+    private String memberId;
 
     private String studyPlanId;
 

@@ -11,16 +11,17 @@
   검증 로직(허용값 확인, 본인 소유 확인)이 테스트까지 돼 있어서 중복 구현하지 않는다.
 
 Firestore 문서 스키마는 팀원 쪽 StudyPlanItemRepository.toMap()과 정확히 맞춰야 한다:
-    memberId (Long), studyPlanId (String), planDate ("yyyy-MM-dd" String),
+    memberId (String), studyPlanId (String), planDate ("yyyy-MM-dd" String),
     subject (String), content (String), sortOrder (int), progressRate (int),
     completedAt (Timestamp|null), startTime (String|null), endTime (String|null),
     durationMinutes (int|null), createdAt/updatedAt (Timestamp)
 
 주의:
-- 로그인 파트가 아직 없어서 memberId(Long)를 우리 쪽 userId(문자열, 지금은 "guest" 같은
-  값)에서 자동으로 만들어낼 방법이 없다. member_id_for_user()가 userId 문자열을
-  안정적인(=실행할 때마다 같은) 숫자로 바꿔주는 임시 변환이다 (로그인 붙으면 진짜 회원
-  id로 교체).
+- memberId는 로그인 백엔드(Planit-Web-Auth-Plan-Quiz)가 세션에 저장하는 Firebase Auth
+  uid(문자열)를 그대로 쓴다. 체크리스트 백엔드의 memberId 필드도 원래 Long이었던 걸
+  String으로 맞춰뒀다. 로그인 전 임시 테스트 때는 그냥 "guest" 같은 문자열을 userId로
+  넘기면 되고, 로그인 붙으면 프론트가 실제 uid를 userId로 넘기기만 하면 된다(이 파일
+  쪽은 바꿀 게 없음).
 - 우리 플랜은 하루 단위 분량만 있고 항목별 시작/끝 시각이 없어서 startTime/endTime은
   항상 None이다. 대신 durationMinutes를 그날 전체 시간(day["minutes"])을 항목별
   pagesToday 비율로 나눠서 근사치로 채운다.
@@ -30,20 +31,17 @@ Firestore 문서 스키마는 팀원 쪽 StudyPlanItemRepository.toMap()과 정�
 """
 from __future__ import annotations
 
-import hashlib
-
 PYTHON_API_BASE = "http://localhost:8000"
 
 
-def member_id_for_user(user_id: str) -> int:
+def member_id_for_user(user_id: str) -> str:
     """
-    로그인 파트가 아직 없어서 진짜 회원 id(Long)가 없다. user_id 문자열("guest" 등)을
-    해시해서 항상 같은 숫자가 나오게 만드는 임시 변환이다 (Python 내장 hash()는 실행할
-    때마다 값이 달라져서 못 쓴다 - sha256으로 고정).
-    TODO: 로그인 파트 머지되면 이 함수 대신 실제 회원 id를 그대로 쓰도록 교체.
+    체크리스트 Firestore 문서의 memberId(String)로 쓸 값. 로그인 붙은 뒤에는 이게
+    Firebase Auth uid 그 자체여야 하므로, 지금은 그냥 user_id를 그대로 돌려준다
+    (예전엔 Long 타입에 맞추려고 숫자로 해시했었는데, 체크리스트 쪽 스키마를
+    String으로 바꿔서 더 이상 그럴 필요가 없다).
     """
-    digest = hashlib.sha256(user_id.encode()).hexdigest()
-    return int(digest[:8], 16) % 1_000_000_000
+    return user_id
 
 
 def study_plan_id_for_user(user_id: str) -> str:
@@ -66,7 +64,7 @@ def _get_firestore_client(credentials_path: str):
 
 def build_study_plan_items(
     plan: dict,
-    member_id: int,
+    member_id: str,
     study_plan_id: str,
 ) -> list[dict]:
     """
@@ -110,7 +108,7 @@ def build_study_plan_items(
 
 def push_plan_to_firestore(
     plan: dict,
-    member_id: int,
+    member_id: str,
     study_plan_id: str,
     credentials_path: str = "firebase-service-account.json",
     clear_existing: bool = True,
@@ -238,7 +236,7 @@ if __name__ == "__main__":
     parser.add_argument("credentials_path", nargs="?", help="firebase-service-account.json 경로")
     parser.add_argument("--read", action="store_true", help="쓰지 않고, Firestore에서 읽기만 확인")
     parser.add_argument("--study-plan-id", default="plan-guest")
-    parser.add_argument("--member-id", type=int, default=1)
+    parser.add_argument("--member-id", default="test-uid-1")
     args = parser.parse_args()
 
     if args.read:
