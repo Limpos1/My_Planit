@@ -5,6 +5,7 @@ React 프론트엔드와 연결하기 위한 FastAPI 서버.
 - 목차 파싱(사진 여러 장/PDF)과 학습 플랜 생성을 각각 엔드포인트로 노출한다.
 """
 import base64
+import os
 import tempfile
 from datetime import date, timedelta
 from pathlib import Path
@@ -16,6 +17,13 @@ from pydantic import BaseModel
 from api_call import parse_toc_from_images, parse_toc_from_text
 from pdf_extract import extract_toc_text
 from schedule import generate_study_plan
+from checklist_sync import (
+    fetch_plan_from_firestore,
+    member_id_for_user,
+    move_item_in_firestore,
+    push_plan_to_firestore,
+    study_plan_id_for_user,
+)
 
 app = FastAPI(title="Planit TOC Parser")
 
@@ -26,7 +34,23 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-PLANS_STORE: dict[str, dict] = {}  # TODO: 실 서비스에서는 DB로 교체 (지금은 서버 재시작하면 사라짐)
+# 팀원의 "할일 체크리스트" 백엔드(Planit-Web-Checklist-main)와 공유하는 Firestore
+# 서비스 계정 키 경로. 플랜 저장/조회/이동을 전부 여기(Firestore)에 직접 한다 -
+# 더 이상 메모리(PLANS_STORE)에 따로 들고 있지 않는다.
+CHECKLIST_FIREBASE_CREDENTIALS = os.environ.get(
+    "CHECKLIST_FIREBASE_CREDENTIALS", "firebase-service-account.json"
+)
+
+
+def _require_firestore_credentials() -> None:
+    if not os.path.exists(CHECKLIST_FIREBASE_CREDENTIALS):
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                f"{CHECKLIST_FIREBASE_CREDENTIALS} 파일이 없어서 플랜 저장소(Firestore)에 "
+                "연결할 수 없습니다. 팀원에게 받은 서비스 계정 키 파일을 이 서버 루트에 넣어주세요."
+            ),
+        )
 
 
 @app.post("/parse-toc/image")
@@ -100,7 +124,11 @@ class GeneratePlanRequest(BaseModel):
 
 @app.post("/generate-plan")
 async def generate_plan(req: GeneratePlanRequest):
-    """선택된 챕터 + 기간/시간 설정을 받아 날짜별 학습 플랜을 생성한다."""
+    """
+    선택된 챕터 + 기간/시간 설정을 받아 날짜별 학습 플랜을 생성하고, userId가 있으면
+    Firestore "study_plan_items" 컬렉션에 바로 저장한다 (팀원의 체크리스트 백엔드가
+    읽는 곳과 같은 컬렉션 - 별도 동기화 스크립트를 돌릴 필요 없이 여기서 바로 반영됨).
+    """
     all_days = []
     d = req.startDate
     while d <= req.targetDate:
@@ -122,66 +150,67 @@ async def generate_plan(req: GeneratePlanRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
     if req.userId:
-        PLANS_STORE[req.userId] = result
+        _require_firestore_credentials()
+        try:
+            push_plan_to_firestore(
+                result,
+                member_id=member_id_for_user(req.userId),
+                study_plan_id=study_plan_id_for_user(req.userId),
+                credentials_path=CHECKLIST_FIREBASE_CREDENTIALS,
+            )
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"플랜 저장 실패: {e}")
 
     return result
 
 
 @app.get("/plans/{user_id}")
 async def get_plan(user_id: str):
-    """메인페이지가 로그인한 사용자의 최근 학습 플랜을 조회할 때 쓰는 엔드포인트."""
-    plan = PLANS_STORE.get(user_id)
-    if plan is None:
+    """
+    메인페이지 캘린더가 Firestore에서 사용자의 학습 플랜을 조회할 때 쓰는 엔드포인트.
+    오늘 할 일(체크리스트)은 이 응답에서 오늘 날짜에 해당하는 항목만 프론트에서
+    걸러서 보여준다 - 별도로 팀원 API를 호출할 필요가 없다. memberId는 진도율
+    체크(PATCH .../progress)를 프론트가 팀원 API로 직접 호출할 때 필요해서 같이 내려준다.
+    """
+    _require_firestore_credentials()
+    try:
+        plan = fetch_plan_from_firestore(
+            study_plan_id_for_user(user_id),
+            credentials_path=CHECKLIST_FIREBASE_CREDENTIALS,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"플랜 조회 실패: {e}")
+
+    if not plan["days"]:
         raise HTTPException(status_code=404, detail="저장된 플랜이 없습니다.")
+
+    plan["memberId"] = member_id_for_user(user_id)
     return plan
 
-class ProgressUpdateRequest(BaseModel):
-    date: str
-    items: list[int]  # 그날 items 배열과 순서를 맞춘 진도율(%) 리스트
-
-
-@app.post("/plans/{user_id}/progress")
-async def update_progress(user_id: str, req: ProgressUpdateRequest):
-    """오늘 할 일 화면에서 사용자가 고른 항목별 진도율(%)을 저장한다."""
-    plan = PLANS_STORE.get(user_id)
-    if plan is None:
-        raise HTTPException(status_code=404, detail="저장된 플랜이 없습니다.")
-
-    day = next((d for d in plan["days"] if d["date"] == req.date), None)
-    if day is None:
-        raise HTTPException(status_code=404, detail="해당 날짜의 플랜이 없습니다.")
-
-    for item, progress in zip(day["items"], req.items):
-        item["progress"] = progress
-
-    PLANS_STORE[user_id] = plan
-    return plan
 
 class MoveItemRequest(BaseModel):
-    fromDate: str
-    itemIndex: int
+    itemId: str
     toDate: str
 
 
 @app.post("/plans/{user_id}/move-item")
 async def move_item(user_id: str, req: MoveItemRequest):
     """메인 달력에서 항목을 다른 날짜로 드래그해서 옮겼을 때 호출된다."""
-    plan = PLANS_STORE.get(user_id)
-    if plan is None:
-        raise HTTPException(status_code=404, detail="저장된 플랜이 없습니다.")
+    _require_firestore_credentials()
+    try:
+        move_item_in_firestore(req.itemId, req.toDate, credentials_path=CHECKLIST_FIREBASE_CREDENTIALS)
+        plan = fetch_plan_from_firestore(
+            study_plan_id_for_user(user_id),
+            credentials_path=CHECKLIST_FIREBASE_CREDENTIALS,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"항목 이동 실패: {e}")
 
-    from_day = next((d for d in plan["days"] if d["date"] == req.fromDate), None)
-    to_day = next((d for d in plan["days"] if d["date"] == req.toDate), None)
-    if from_day is None or to_day is None:
-        raise HTTPException(status_code=404, detail="해당 날짜의 플랜이 없습니다.")
-    if req.itemIndex < 0 or req.itemIndex >= len(from_day["items"]):
-        raise HTTPException(status_code=400, detail="잘못된 항목 인덱스입니다.")
-
-    item = from_day["items"].pop(req.itemIndex)
-    to_day["items"].append(item)
-
-    PLANS_STORE[user_id] = plan
+    plan["memberId"] = member_id_for_user(user_id)
     return plan
+
 
 @app.get("/health")
 async def health():

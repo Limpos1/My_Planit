@@ -2,6 +2,10 @@ import { useEffect, useMemo, useState } from "react";
 import { theme } from "../theme";
 
 const API_BASE = "http://localhost:8000";
+// 팀원의 "할일 체크리스트" 백엔드(Planit-Web-Checklist-main). 진도율 체크와
+// "오늘 학습 마무리하기"는 파이썬을 거치지 않고 이 서버를 직접 호출한다
+// (팀원이 이미 검증해둔 로직을 그대로 쓰기 위해).
+const JAVA_API_BASE = "http://localhost:8080";
 const WEEKDAY_LABELS = ["일", "월", "화", "수", "목", "금", "토"];
 const PROGRESS_STEPS = [25, 50, 75, 100];
 const DAY_CELL_HEIGHT = 168;
@@ -102,14 +106,14 @@ function s_btnPrimary(disabled) {
     width: "100%",
   };
 }
+
 export default function MainScreen() {
   const [plan, setPlan] = useState(null);
   const [error, setError] = useState("");
-  const [pendingProgress, setPendingProgress] = useState({});
   const [saving, setSaving] = useState(false);
   const [saveMsg, setSaveMsg] = useState("");
   const [dragOverDate, setDragOverDate] = useState(null);
-  const [moveMsg, setMoveMsg] = useState("");
+  const [actionMsg, setActionMsg] = useState("");
 
   const [stopwatchSeconds, setStopwatchSeconds] = useState(0);
   const [stopwatchRunning, setStopwatchRunning] = useState(false);
@@ -122,7 +126,7 @@ export default function MainScreen() {
 
   const userId = localStorage.getItem("userId") || "guest"; // TODO: 로그인 붙으면 이 fallback 제거
 
-  useEffect(() => {
+  const reloadPlan = () =>
     fetch(`${API_BASE}/plans/${userId}`)
       .then((res) => {
         if (!res.ok) throw new Error("저장된 학습 플랜이 없습니다.");
@@ -133,6 +137,10 @@ export default function MainScreen() {
         setError("");
       })
       .catch((e) => setError(e.message));
+
+  useEffect(() => {
+    reloadPlan();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const planByDate = useMemo(() => {
@@ -150,33 +158,36 @@ export default function MainScreen() {
   const [selectedDate, setSelectedDate] = useState(todayKey());
 
   const todayItems = planByDate[todayKey()]?.items || [];
+  const memberId = plan?.memberId;
 
-  useEffect(() => {
-    const init = {};
-    todayItems.forEach((item, i) => {
-      init[i] = item.progress ?? 0;
-    });
-    setPendingProgress(init);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [plan]);
+  // 진도율 버튼을 누르면 파이썬을 거치지 않고 팀원의 체크리스트 API로 바로 반영한다.
+  const handleSetProgress = async (itemId, progressRate) => {
+    if (memberId == null) return;
+    setActionMsg("");
+    try {
+      const res = await fetch(
+        `${JAVA_API_BASE}/api/study-plan-items/${itemId}/progress?memberId=${memberId}&progressRate=${progressRate}`,
+        { method: "PATCH" }
+      );
+      if (!res.ok) throw new Error("진도율 저장에 실패했습니다.");
+      await reloadPlan();
+    } catch (e) {
+      setActionMsg(e.message);
+    }
+  };
 
-  // TODO(팀원 연동): 완료하기를 누르면 진도율 저장 + (나중에) 팀원이 만든 퀴즈를 여기서 띄우면 됨
-  const handleComplete = async () => {
+  // "오늘 학습 마무리하기": 다 못 채웠어도 팀원 API로 하루 완료 기록을 남긴다.
+  const handleCompleteDay = async () => {
+    if (memberId == null) return;
     setSaving(true);
     setSaveMsg("");
     try {
-      const res = await fetch(`${API_BASE}/plans/${userId}/progress`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          date: todayKey(),
-          items: todayItems.map((_, i) => pendingProgress[i] ?? 0),
-        }),
-      });
-      if (!res.ok) throw new Error("진도율 저장에 실패했습니다.");
-      const updated = await res.json();
-      setPlan(updated);
-      setSaveMsg("오늘 진도율이 저장됐어요!");
+      const res = await fetch(
+        `${JAVA_API_BASE}/api/study-plan-items/complete-day?memberId=${memberId}&date=${todayKey()}`,
+        { method: "POST" }
+      );
+      if (!res.ok) throw new Error("오늘 학습 마무리에 실패했습니다.");
+      setSaveMsg("오늘 학습을 마무리했어요!");
     } catch (e) {
       setSaveMsg(e.message);
     } finally {
@@ -189,21 +200,21 @@ export default function MainScreen() {
     setDragOverDate(null);
     const raw = e.dataTransfer.getData("text/plain");
     if (!raw) return;
-    const { date: fromDate, index } = JSON.parse(raw);
+    const { itemId, date: fromDate } = JSON.parse(raw);
     if (fromDate === targetDate) return;
 
     try {
       const res = await fetch(`${API_BASE}/plans/${userId}/move-item`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ fromDate, itemIndex: index, toDate: targetDate }),
+        body: JSON.stringify({ itemId, toDate: targetDate }),
       });
       if (!res.ok) throw new Error("항목 이동에 실패했습니다.");
       const updated = await res.json();
       setPlan(updated);
-      setMoveMsg("");
+      setActionMsg("");
     } catch (e2) {
-      setMoveMsg(e2.message);
+      setActionMsg(e2.message);
     }
   };
 
@@ -249,6 +260,8 @@ export default function MainScreen() {
   };
 
   const selectedDay = selectedDate ? planByDate[selectedDate] : null;
+  const totalItems = (plan.days || []).reduce((sum, d) => sum + d.items.length, 0);
+  const totalMinutes = (plan.days || []).reduce((sum, d) => sum + d.minutes, 0);
 
   return (
     <div style={page}>
@@ -268,9 +281,9 @@ export default function MainScreen() {
       <div style={layout}>
         <div style={{ background: "#fff", border: `1px solid ${theme.colors.border}`, borderRadius: theme.radius.lg, padding: 24, boxShadow: theme.shadow }}>
           <p style={{ color: theme.colors.textSoft, margin: "0 0 12px", fontSize: 14 }}>
-            총 {plan.totalPages}페이지 · 총 {plan.totalMinutes}분 배정 · 항목을 다른 날짜로 드래그해서 옮길 수 있어요
+            총 {totalItems}개 항목 · 총 {totalMinutes}분 배정 · 항목을 다른 날짜로 드래그해서 옮길 수 있어요
           </p>
-          {moveMsg && <p style={{ color: theme.colors.danger, fontSize: 13, fontWeight: 600, margin: "0 0 12px" }}>{moveMsg}</p>}
+          {actionMsg && <p style={{ color: theme.colors.danger, fontSize: 13, fontWeight: 600, margin: "0 0 12px" }}>{actionMsg}</p>}
 
           <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 16, marginBottom: 12 }}>
             <button onClick={goPrevMonth} style={s_btnSecondary}>◀</button>
@@ -329,15 +342,15 @@ export default function MainScreen() {
                           </div>
                           <div style={{ overflowY: "auto", flex: 1, minHeight: 0 }}>
                             {day &&
-                              day.items.map((item, idx) => (
+                              day.items.map((item) => (
                                 <div
-                                  key={idx}
+                                  key={item.id}
                                   draggable
                                   onDragStart={(e) => {
                                     e.stopPropagation();
-                                    e.dataTransfer.setData("text/plain", JSON.stringify({ date: key, index: idx }));
+                                    e.dataTransfer.setData("text/plain", JSON.stringify({ itemId: item.id, date: key }));
                                   }}
-                                  title={item.title}
+                                  title={item.content}
                                   style={{
                                     background: theme.colors.primarySoft,
                                     color: theme.colors.primaryDark,
@@ -352,7 +365,7 @@ export default function MainScreen() {
                                     textOverflow: "ellipsis",
                                   }}
                                 >
-                                  {item.title} · {item.pagesToday}p
+                                  {item.content} · {item.durationMinutes}분
                                 </div>
                               ))}
                           </div>
@@ -375,12 +388,12 @@ export default function MainScreen() {
                   <p style={{ color: theme.colors.textSoft, margin: "6px 0 0" }}>배정된 항목 없음</p>
                 ) : (
                   <ul style={{ margin: "8px 0 0", paddingLeft: 18 }}>
-                    {selectedDay.items.map((item, i) => (
-                      <li key={i} style={{ marginBottom: 4, fontSize: 14 }}>
-                        {item.title} — {item.pageRange ? item.pageRange : `${item.pagesToday}p`}
+                    {selectedDay.items.map((item) => (
+                      <li key={item.id} style={{ marginBottom: 4, fontSize: 14 }}>
+                        {item.subject ? `${item.subject} · ` : ""}{item.content}
                         {" "}
-                        <span style={{ color: theme.colors.textSoft }}>({item.pagesToday}p / {item.totalPages}p)</span>
-                        {" "}({item.status}{item.progress != null ? `, ${item.progress}%` : ""})
+                        <span style={{ color: theme.colors.textSoft }}>({item.durationMinutes}분)</span>
+                        {" "}({item.progressRate}%{item.completed ? ", 완료" : ""})
                       </li>
                     ))}
                   </ul>
@@ -399,7 +412,7 @@ export default function MainScreen() {
 
         <div style={{ background: "#fff", border: `1px solid ${theme.colors.border}`, borderRadius: theme.radius.lg, boxShadow: theme.shadow, display: "flex", flexDirection: "column" }}>
           <div style={{ padding: "20px 20px 0", textAlign: "center", borderBottom: `1px solid ${theme.colors.border}`, paddingBottom: 16 }}>
-            {/* TODO: "완료하기" 누를 때 이 경과 시간(stopwatchSeconds)도 같이 서버로 전송 */}
+            {/* TODO: 완료 처리할 때 이 경과 시간(stopwatchSeconds)도 같이 서버로 전송 */}
             <div style={{ fontSize: 32, fontWeight: 800, fontFamily: "monospace", letterSpacing: 1, marginBottom: 10 }}>
               {formatStopwatch(stopwatchSeconds)}
             </div>
@@ -419,27 +432,27 @@ export default function MainScreen() {
             </div>
           </div>
 
-          {/* 여기부터 원래 "진도 관리" 담당 팀원 파트 (지금은 임시 버전으로 인라인 구현) */}
+          {/* 오늘 할 일: 팀원의 체크리스트 API(진도율 PATCH)를 항목 클릭 즉시 직접 호출한다 */}
           <div style={{ padding: 20, flex: 1 }}>
             <h3 style={{ margin: "0 0 12px", fontSize: 16 }}>오늘 할 일</h3>
             {todayItems.length === 0 ? (
               <p style={{ color: theme.colors.textSoft, fontSize: 14 }}>오늘 배정된 학습 항목이 없어요.</p>
             ) : (
-              todayItems.map((item, i) => (
-                <div key={i} style={{ marginBottom: 18 }}>
+              todayItems.map((item) => (
+                <div key={item.id} style={{ marginBottom: 18 }}>
                   <p style={{ margin: "0 0 8px", fontWeight: 600, fontSize: 14 }}>
-                    {item.title}
-                    {item.pageRange && (
-                      <span style={{ color: theme.colors.primaryDark, fontWeight: 700 }}> · {item.pageRange}</span>
+                    {item.content}
+                    {item.subject && (
+                      <span style={{ color: theme.colors.primaryDark, fontWeight: 700 }}> · {item.subject}</span>
                     )}
                   </p>
                   <div style={{ display: "flex", gap: 6 }}>
                     {PROGRESS_STEPS.map((p) => {
-                      const active = (pendingProgress[i] ?? 0) === p;
+                      const active = item.progressRate === p;
                       return (
                         <button
                           key={p}
-                          onClick={() => setPendingProgress((prev) => ({ ...prev, [i]: p }))}
+                          onClick={() => handleSetProgress(item.id, p)}
                           style={{
                             flex: 1,
                             padding: "6px 0",
@@ -464,8 +477,8 @@ export default function MainScreen() {
           {todayItems.length > 0 && (
             <div style={{ borderTop: `1px solid ${theme.colors.border}`, padding: 16 }}>
               {saveMsg && <p style={{ fontSize: 12, color: theme.colors.primaryDark, margin: "0 0 8px" }}>{saveMsg}</p>}
-              <button onClick={handleComplete} disabled={saving} style={s_btnPrimary(saving)}>
-                {saving ? "저장 중..." : "완료하기"}
+              <button onClick={handleCompleteDay} disabled={saving} style={s_btnPrimary(saving)}>
+                {saving ? "저장 중..." : "오늘 학습 마무리하기"}
               </button>
             </div>
           )}

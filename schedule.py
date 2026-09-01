@@ -44,6 +44,7 @@ def _get_leaf_items(parsed: dict) -> list[dict]:
                 if sub.get("estimatedPageCount"):
                     leaves.append({
                         "title": sub["title"],
+                        "subject": chapter.get("subject"),
                         "pageCount": int(round(sub["estimatedPageCount"])),
                         "startPage": sub.get("startPage") if not sub.get("needsFallback") else None,
                     })
@@ -51,6 +52,7 @@ def _get_leaf_items(parsed: dict) -> list[dict]:
             if chapter.get("estimatedPageCount"):
                 leaves.append({
                     "title": chapter["title"],
+                    "subject": chapter.get("subject"),
                     "pageCount": int(round(chapter["estimatedPageCount"])),
                     "startPage": chapter.get("startPage") if not chapter.get("needsFallback") else None,
                 })
