@@ -38,7 +38,7 @@ public class StudyPlanItemRepository {
      * REQ-F-050~054: 특정 회원의 특정 날짜 학습 계획 리스트를
      * 하루 내 표시 순서(sortOrder) 기준으로 조회합니다.
      */
-    public List<StudyPlanItem> findByMemberIdAndPlanDate(Long memberId, LocalDate planDate) {
+    public List<StudyPlanItem> findByMemberIdAndPlanDate(String memberId, LocalDate planDate) {
         try {
             ApiFuture<QuerySnapshot> future = firestore.collection(COLLECTION)
                     .whereEqualTo("memberId", memberId)
@@ -112,7 +112,7 @@ public class StudyPlanItemRepository {
     private StudyPlanItem toEntity(DocumentSnapshot doc) {
         return StudyPlanItem.builder()
                 .id(doc.getId())
-                .memberId(doc.getLong("memberId"))
+                .memberId(doc.getString("memberId"))
                 .studyPlanId(doc.getString("studyPlanId"))
                 .planDate(doc.getString("planDate"))
                 .subject(doc.getString("subject"))

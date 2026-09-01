@@ -39,7 +39,7 @@ class StudyPlanItemServiceTest {
 
     private StudyPlanItemService studyPlanItemService;
 
-    private StudyPlanItem itemOf(Long memberId, String studyPlanId, String id, int progressRate) {
+    private StudyPlanItem itemOf(String memberId, String studyPlanId, String id, int progressRate) {
         return StudyPlanItem.builder()
                 .id(id)
                 .memberId(memberId)
@@ -56,14 +56,14 @@ class StudyPlanItemServiceTest {
     void 오늘의_계획을_조회하면_항목_리스트와_함께_진행률_평균이_반환된다() {
         studyPlanItemService = new StudyPlanItemService(studyPlanItemRepository, studyDayCompletionRepository);
         LocalDate today = LocalDate.now();
-        given(studyPlanItemRepository.findByMemberIdAndPlanDate(1L, today))
+        given(studyPlanItemRepository.findByMemberIdAndPlanDate("uid1", today))
                 .willReturn(List.of(
-                        itemOf(1L, "plan1", "item100", 100),
-                        itemOf(1L, "plan1", "item101", 50),
-                        itemOf(1L, "plan1", "item102", 0),
-                        itemOf(1L, "plan1", "item103", 75)));
+                        itemOf("uid1", "plan1", "item100", 100),
+                        itemOf("uid1", "plan1", "item101", 50),
+                        itemOf("uid1", "plan1", "item102", 0),
+                        itemOf("uid1", "plan1", "item103", 75)));
 
-        TodayPlanResponse result = studyPlanItemService.getTodayPlan(1L, today);
+        TodayPlanResponse result = studyPlanItemService.getTodayPlan("uid1", today);
 
         assertThat(result.getItems()).hasSize(4);
         assertThat(result.getTodayProgressRate()).isEqualTo(56); // (100+50+0+75)/4 = 56.25 -> 반올림 56
@@ -74,9 +74,9 @@ class StudyPlanItemServiceTest {
     void 항목이_없으면_오늘_진행률은_0이고_마무리_여부도_false다() {
         studyPlanItemService = new StudyPlanItemService(studyPlanItemRepository, studyDayCompletionRepository);
         LocalDate today = LocalDate.now();
-        given(studyPlanItemRepository.findByMemberIdAndPlanDate(1L, today)).willReturn(List.of());
+        given(studyPlanItemRepository.findByMemberIdAndPlanDate("uid1", today)).willReturn(List.of());
 
-        TodayPlanResponse result = studyPlanItemService.getTodayPlan(1L, today);
+        TodayPlanResponse result = studyPlanItemService.getTodayPlan("uid1", today);
 
         assertThat(result.getTodayProgressRate()).isEqualTo(0);
         assertThat(result.isDayCompleted()).isFalse();
@@ -85,10 +85,10 @@ class StudyPlanItemServiceTest {
     @Test
     void 진행률을_100으로_체크하면_완료일시가_기록된다() {
         studyPlanItemService = new StudyPlanItemService(studyPlanItemRepository, studyDayCompletionRepository);
-        StudyPlanItem item = itemOf(1L, "plan1", "item100", 0);
+        StudyPlanItem item = itemOf("uid1", "plan1", "item100", 0);
         given(studyPlanItemRepository.findById("item100")).willReturn(Optional.of(item));
 
-        StudyPlanItemResponse result = studyPlanItemService.updateProgress(1L, "item100", 100);
+        StudyPlanItemResponse result = studyPlanItemService.updateProgress("uid1", "item100", 100);
 
         assertThat(result.getProgressRate()).isEqualTo(100);
         assertThat(result.isCompleted()).isTrue();
@@ -98,11 +98,11 @@ class StudyPlanItemServiceTest {
     @Test
     void 완료된_항목의_진행률을_다시_낮추면_완료일시가_비워진다() {
         studyPlanItemService = new StudyPlanItemService(studyPlanItemRepository, studyDayCompletionRepository);
-        StudyPlanItem item = itemOf(1L, "plan1", "item100", 100);
+        StudyPlanItem item = itemOf("uid1", "plan1", "item100", 100);
         item.setCompletedAt(Timestamp.now());
         given(studyPlanItemRepository.findById("item100")).willReturn(Optional.of(item));
 
-        StudyPlanItemResponse result = studyPlanItemService.updateProgress(1L, "item100", 50);
+        StudyPlanItemResponse result = studyPlanItemService.updateProgress("uid1", "item100", 50);
 
         assertThat(result.getProgressRate()).isEqualTo(50);
         assertThat(result.getCompletedAt()).isNull();
@@ -112,18 +112,18 @@ class StudyPlanItemServiceTest {
     void 허용되지_않는_진행률_값이면_예외가_발생한다() {
         studyPlanItemService = new StudyPlanItemService(studyPlanItemRepository, studyDayCompletionRepository);
 
-        assertThatThrownBy(() -> studyPlanItemService.updateProgress(1L, "item100", 30))
+        assertThatThrownBy(() -> studyPlanItemService.updateProgress("uid1", "item100", 30))
                 .isInstanceOf(CustomException.class);
     }
 
     @Test
     void 본인_소유가_아닌_항목을_체크하면_예외가_발생한다() {
         studyPlanItemService = new StudyPlanItemService(studyPlanItemRepository, studyDayCompletionRepository);
-        StudyPlanItem item = itemOf(2L, "plan1", "item100", 0); // 소유자는 memberId=2
+        StudyPlanItem item = itemOf("uid2", "plan1", "item100", 0); // 소유자는 memberId="uid2"
 
         given(studyPlanItemRepository.findById("item100")).willReturn(Optional.of(item));
 
-        assertThatThrownBy(() -> studyPlanItemService.updateProgress(1L, "item100", 50))
+        assertThatThrownBy(() -> studyPlanItemService.updateProgress("uid1", "item100", 50))
                 .isInstanceOf(CustomException.class);
     }
 
@@ -131,8 +131,8 @@ class StudyPlanItemServiceTest {
     void 모든_항목이_100퍼센트면_오늘_학습_마무리가_기록된다() {
         studyPlanItemService = new StudyPlanItemService(studyPlanItemRepository, studyDayCompletionRepository);
         LocalDate today = LocalDate.now();
-        given(studyPlanItemRepository.findByMemberIdAndPlanDate(1L, today))
-                .willReturn(List.of(itemOf(1L, "plan1", "item100", 100), itemOf(1L, "plan1", "item101", 100)));
+        given(studyPlanItemRepository.findByMemberIdAndPlanDate("uid1", today))
+                .willReturn(List.of(itemOf("uid1", "plan1", "item100", 100), itemOf("uid1", "plan1", "item101", 100)));
         given(studyDayCompletionRepository.findByStudyPlanIdAndPlanDate("plan1", today))
                 .willReturn(Optional.empty());
         given(studyDayCompletionRepository.save(any(StudyDayCompletion.class)))
@@ -142,7 +142,7 @@ class StudyPlanItemServiceTest {
                     return completion;
                 });
 
-        DayCompletionResponse result = studyPlanItemService.completeToday(1L, today);
+        DayCompletionResponse result = studyPlanItemService.completeToday("uid1", today);
 
         assertThat(result.isCompleted()).isTrue();
         assertThat(result.getCompletedAt()).isNotNull();
@@ -152,11 +152,11 @@ class StudyPlanItemServiceTest {
     void 일부_항목만_완료했어도_오늘_학습_마무리가_기록된다() {
         studyPlanItemService = new StudyPlanItemService(studyPlanItemRepository, studyDayCompletionRepository);
         LocalDate today = LocalDate.now();
-        given(studyPlanItemRepository.findByMemberIdAndPlanDate(1L, today))
+        given(studyPlanItemRepository.findByMemberIdAndPlanDate("uid1", today))
                 .willReturn(List.of(
-                        itemOf(1L, "plan1", "item100", 100),
-                        itemOf(1L, "plan1", "item101", 25),
-                        itemOf(1L, "plan1", "item102", 0)));
+                        itemOf("uid1", "plan1", "item100", 100),
+                        itemOf("uid1", "plan1", "item101", 25),
+                        itemOf("uid1", "plan1", "item102", 0)));
         given(studyDayCompletionRepository.findByStudyPlanIdAndPlanDate("plan1", today))
                 .willReturn(Optional.empty());
         given(studyDayCompletionRepository.save(any(StudyDayCompletion.class)))
@@ -166,7 +166,7 @@ class StudyPlanItemServiceTest {
                     return completion;
                 });
 
-        DayCompletionResponse result = studyPlanItemService.completeToday(1L, today);
+        DayCompletionResponse result = studyPlanItemService.completeToday("uid1", today);
 
         assertThat(result.isCompleted()).isTrue();
         assertThat(result.getCompletedAt()).isNotNull();
@@ -176,9 +176,9 @@ class StudyPlanItemServiceTest {
     void 항목이_없으면_마무리_요청은_예외가_발생한다() {
         studyPlanItemService = new StudyPlanItemService(studyPlanItemRepository, studyDayCompletionRepository);
         LocalDate today = LocalDate.now();
-        given(studyPlanItemRepository.findByMemberIdAndPlanDate(1L, today)).willReturn(List.of());
+        given(studyPlanItemRepository.findByMemberIdAndPlanDate("uid1", today)).willReturn(List.of());
 
-        assertThatThrownBy(() -> studyPlanItemService.completeToday(1L, today))
+        assertThatThrownBy(() -> studyPlanItemService.completeToday("uid1", today))
                 .isInstanceOf(CustomException.class);
     }
 }
