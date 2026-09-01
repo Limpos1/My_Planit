@@ -139,9 +139,174 @@ function AppRoutes() {
         </Routes>
       </div>
     </div>
+  );import { useState } from "react";
+import { BrowserRouter, Routes, Route, Navigate, useNavigate, useLocation } from "react-router-dom";
+import UploadScreen from "./screens/UploadScreen";
+import SelectUnitsScreen from "./screens/SelectUnitsScreen";
+import CalendarScreen from "./screens/CalendarScreen";
+import AvailabilityScreen from "./screens/AvailabilityScreen";
+import GeneratingScreen from "./screens/GeneratingScreen";
+import MainScreen from "./screens/MainScreen";
+import LoginScreen from "./screens/LoginScreen";
+import { filterParsedToc, rangeMinutes } from "./lib/toc";
+import { s } from "./theme";
+
+const API_BASE = "http://localhost:8000";
+const MAIN_PAGE_URL = "/main";
+const WEEKDAY_KEYS = ["일", "월", "화", "수", "목", "금", "토"];
+
+const STEP_ROUTES = [
+  { path: "/upload", label: "목차 업로드" },
+  { path: "/select", label: "과목 선택" },
+  { path: "/calendar", label: "학습 기간" },
+  { path: "/availability", label: "가용 시간" },
+  { path: "/generating", label: "생성 중" },
+];
+
+function buildWeekdayMinutes({ weekdayRange, weekendRange, weekendExcluded }) {
+  const weekdayMinutes = rangeMinutes(weekdayRange);
+  const weekendMinutes = weekendExcluded ? 0 : rangeMinutes(weekendRange);
+  const result = {};
+  WEEKDAY_KEYS.forEach((name, idx) => {
+    const isWeekend = idx === 0 || idx === 6;
+    result[name] = isWeekend ? weekendMinutes : weekdayMinutes;
+  });
+  return result;
+}
+
+function AppRoutes() {
+  const navigate = useNavigate();
+  const location = useLocation();
+
+  const [parsedToc, setParsedToc] = useState(null);
+  const [filteredToc, setFilteredToc] = useState(null);
+  const [calendarInfo, setCalendarInfo] = useState(null);
+  const [done, setDone] = useState(false);
+  const [error, setError] = useState("");
+
+  // 로그인 게이트 — 로그인 백엔드(Planit-Web-Auth-Plan-Quiz)와 연결되는 지점.
+  // localStorage에 "userId"가 있으면(=예전에 로그인해서 저장해둔 uid가 있으면)
+  // 로그인된 걸로 보고 앱을 그대로 보여준다. 없으면 무슨 경로로 들어왔든
+  // LoginScreen부터 보여준다. LoginScreen이 로그인에 성공하면
+  // onLoggedIn(uid)를 호출하는데, 그게 바로 아래 setUserId다 - 그 순간
+  // 이 컴포넌트가 다시 렌더링되면서 로그인 게이트를 통과하게 된다.
+  const [userId, setUserId] = useState(() => localStorage.getItem("userId"));
+
+  const handleParsed = (data) => {
+    setParsedToc(data);
+    navigate("/select");
+  };
+
+  const handleUnitsSelected = (excludedKeys) => {
+    setFilteredToc(filterParsedToc(parsedToc, excludedKeys));
+    navigate("/calendar");
+  };
+
+  const handleCalendarNext = (info) => {
+    setCalendarInfo(info);
+    navigate("/availability");
+  };
+
+  const handleAvailabilityNext = async (availability) => {
+    navigate("/generating");
+    setError("");
+    setDone(false);
+    const weekdayMinutes = buildWeekdayMinutes(availability);
+    // 로그인 붙은 뒤: 이 시점엔 아래 로그인 게이트를 통과한 뒤라 항상 진짜
+    // uid가 들어있다("guest"는 로그인 화면 자체를 테스트할 때만 나올 수 있는 값).
+    const userId = localStorage.getItem("userId") || "guest";
+
+    try {
+      const res = await fetch(`${API_BASE}/generate-plan`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          parsedToc: filteredToc,
+          startDate: calendarInfo.startDate,
+          targetDate: calendarInfo.targetDate,
+          weekdayMinutes,
+          checkedDates: calendarInfo.checkedDates,
+          userId,
+        }),
+      });
+      if (!res.ok) {
+        const errBody = await res.json().catch(() => ({}));
+        throw new Error(errBody.detail || `서버 오류 (${res.status})`);
+      }
+      await res.json();
+      setDone(true);
+      setTimeout(() => {
+        navigate(MAIN_PAGE_URL);
+      }, 1500);
+    } catch (e) {
+      setError(e.message || "플랜 생성 중 오류가 발생했습니다.");
+      navigate("/availability");
+    }
+  };
+
+  // 로그인 안 돼 있으면 어떤 경로로 들어왔든 로그인 화면부터 보여준다
+  // (마법사/메인페이지 둘 다 이 아래에서 막힌다).
+  if (!userId) {
+    return <LoginScreen onLoggedIn={(uid) => { setUserId(uid); navigate("/upload"); }} />;
+  }
+
+  // "/main"은 팀 전체 메인페이지 — 마법사 껍데기(스텝바/카드) 없이 MainScreen이
+  // 자기 레이아웃을 통째로 그린다. 그 외 경로는 좁은 마법사 카드 안에서 보여준다.
+  if (location.pathname === "/main") {
+    return <MainScreen />;
+  }
+
+  const currentStepIndex = STEP_ROUTES.findIndex((r) => r.path === location.pathname);
+
+  return (
+    <div style={s.page}>
+      <div style={s.header}>
+        <span style={s.logoDot} />
+        <span style={s.logoText}>Planit</span>
+      </div>
+
+      <div style={s.stepBar}>
+        {STEP_ROUTES.map((r, i) => (
+          <span key={r.path} style={s.stepPill(i === currentStepIndex)}>
+            {i + 1}. {r.label}
+          </span>
+        ))}
+      </div>
+
+      {error && <p style={s.errorText}>{error}</p>}
+
+      <div style={s.card}>
+        <Routes>
+          <Route path="/upload" element={<UploadScreen onParsed={handleParsed} />} />
+          <Route
+            path="/select"
+            element={
+              <SelectUnitsScreen parsedToc={parsedToc} onNext={handleUnitsSelected} onBack={() => navigate("/upload")} />
+            }
+          />
+          <Route
+            path="/calendar"
+            element={<CalendarScreen onNext={handleCalendarNext} onBack={() => navigate("/select")} />}
+          />
+          <Route
+            path="/availability"
+            element={<AvailabilityScreen onNext={handleAvailabilityNext} onBack={() => navigate("/calendar")} />}
+          />
+          <Route path="/generating" element={<GeneratingScreen done={done} />} />
+          <Route path="*" element={<Navigate to="/upload" replace />} />
+        </Routes>
+      </div>
+    </div>
   );
 }
 
+export default function App() {
+  return (
+    <BrowserRouter>
+      <AppRoutes />
+    </BrowserRouter>
+  );
+}
 export default function App() {
   return (
     <BrowserRouter>

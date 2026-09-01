@@ -2,10 +2,18 @@ import { useEffect, useMemo, useState } from "react";
 import { theme } from "../theme";
 
 const API_BASE = "http://localhost:8000";
-// 팀원의 "할일 체크리스트" 백엔드(Planit-Web-Checklist-main). 진도율 체크와
-// "오늘 학습 마무리하기"는 파이썬을 거치지 않고 이 서버를 직접 호출한다
-// (팀원이 이미 검증해둔 로직을 그대로 쓰기 위해).
+// 팀원의 "할일 체크리스트" 백엔드(Planit-Web-Checklist-main, 8080번 포트).
+// 두 프로젝트를 잇는 지점은 두 군데다:
+//  (A)(B) 플랜 저장/조회는 파이썬(server.py + checklist_sync.py)이 Firestore를
+//         통해서 중계한다 - 자세한 그림은 checklist_sync.py 맨 위 주석 참고.
+//  (C) 여기(이 파일)는 그 중계를 안 거치고, 진도율 체크/오늘 마무리만 파이썬을
+//      건너뛰어 팀원 서버를 브라우저에서 직접 호출한다. 팀원 쪽에 이미 검증
+//      로직(진행률 허용값, 본인 소유 확인)이 테스트까지 돼 있어서 그대로 쓰는 것.
 const JAVA_API_BASE = "http://localhost:8080";
+// 로그인 백엔드(Planit-Web-Auth-Plan-Quiz, 8081번 포트). 로그아웃 버튼만
+// 여기서 직접 호출한다 - 세션 쿠키를 지우는 것도 결국 서버가 해야 하는
+// 일이라서(HttpSession.invalidate()), 파이썬을 거칠 이유가 없다.
+const AUTH_API_BASE = "http://localhost:8081";
 const WEEKDAY_LABELS = ["일", "월", "화", "수", "목", "금", "토"];
 const PROGRESS_STEPS = [25, 50, 75, 100];
 const DAY_CELL_HEIGHT = 168;
@@ -163,9 +171,12 @@ export default function MainScreen() {
   const [selectedDate, setSelectedDate] = useState(todayKey());
 
   const todayItems = planByDate[todayKey()]?.items || [];
+  // memberId는 파이썬 서버(GET /plans/{userId})가 응답에 같이 실어준 값이다
+  // (server.py 참고) - 팀원 API를 부를 때 "이게 누구 항목인지" 알려주는 용도.
+  // itemId는 Firestore 문서 id 그 자체라서, 팀원 API가 그 id로 문서를 바로 찾는다.
   const memberId = plan?.memberId;
 
-  // 진도율 버튼을 누르면 파이썬을 거치지 않고 팀원의 체크리스트 API로 바로 반영한다.
+  // (C) 진도율 버튼을 누르면 파이썬을 거치지 않고 팀원의 체크리스트 API로 바로 반영한다.
   const handleSetProgress = async (itemId, progressRate) => {
     if (memberId == null) return;
     setActionMsg("");
@@ -181,7 +192,7 @@ export default function MainScreen() {
     }
   };
 
-  // "오늘 학습 마무리하기": 다 못 채웠어도 팀원 API로 하루 완료 기록을 남긴다.
+  // (C) "오늘 학습 마무리하기": 다 못 채웠어도 팀원 API로 하루 완료 기록을 남긴다.
   const handleCompleteDay = async () => {
     if (memberId == null) return;
     setSaving(true);
@@ -198,6 +209,19 @@ export default function MainScreen() {
     } finally {
       setSaving(false);
     }
+  };
+
+  // 로그인 백엔드의 세션 쿠키를 지워달라고 요청한 뒤, 로컬에 저장해둔 uid도
+  // 지우고 새로고침한다. 새로고침되면 App.jsx의 로그인 게이트가 다시 동작해서
+  // (localStorage에 "userId"가 없으니) 로그인 화면으로 자연스럽게 돌아간다.
+  const handleLogout = async () => {
+    try {
+      await fetch(`${AUTH_API_BASE}/api/auth/logout`, { method: "POST", credentials: "include" });
+    } catch {
+      // 로그아웃 요청이 실패해도 로컬 로그인 상태는 지워서 화면은 로그인 화면으로 보낸다.
+    }
+    localStorage.removeItem("userId");
+    window.location.href = "/upload";
   };
 
   const handleDrop = async (targetDate, e) => {
@@ -277,9 +301,9 @@ export default function MainScreen() {
           <strong style={{ fontSize: 18 }}>Planit</strong>
         </div>
         <div style={{ display: "flex", gap: 20 }}>
-          {/* TODO: 로그인 파트와 연결 — 로그아웃/마이페이지 */}
+          {/* TODO: 마이페이지 화면은 아직 없음 */}
           <span style={topMenuLink}>마이페이지</span>
-          <span style={topMenuLink}>로그아웃</span>
+          <span style={topMenuLink} onClick={handleLogout}>로그아웃</span>
         </div>
       </div>
       {/* TODO: 사이드 메뉴 내용은 팀과 협의 후 구현 */}
