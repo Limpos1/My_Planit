@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { BrowserRouter, Routes, Route, Navigate, useNavigate, useLocation } from "react-router-dom";
 import UploadScreen from "./screens/UploadScreen";
 import SelectUnitsScreen from "./screens/SelectUnitsScreen";
@@ -31,6 +31,28 @@ function buildWeekdayMinutes({ weekdayRange, weekendRange, weekendExcluded }) {
     result[name] = isWeekend ? weekendMinutes : weekdayMinutes;
   });
   return result;
+}
+
+// handleLoggedIn과 같은 "기존 플랜 있으면 메인, 없으면 마법사" 판단을
+// 별도 컴포넌트로 뺀 것 — AppRoutes 렌더링 중간에 바로 실행하면 안 되고
+// (부수효과는 useEffect 안에서만), 화면엔 아무것도 안 그리고 판단이 끝나는
+// 즉시 navigate로 실제 화면으로 넘어간다.
+function RootRedirect({ userId }) {
+  const navigate = useNavigate();
+  useEffect(() => {
+    let cancelled = false;
+    fetch(`${API_BASE}/plans/${userId}`)
+      .then((res) => {
+        if (!cancelled) navigate(res.ok ? MAIN_PAGE_URL : "/upload", { replace: true });
+      })
+      .catch(() => {
+        if (!cancelled) navigate("/upload", { replace: true });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [userId, navigate]);
+  return null;
 }
 
 function AppRoutes() {
@@ -124,6 +146,15 @@ function AppRoutes() {
   // (마법사/메인페이지 둘 다 이 아래에서 막힌다).
   if (!userId) {
     return <LoginScreen onLoggedIn={handleLoggedIn} />;
+  }
+
+  // 이미 로그인된 채로(브라우저에 userId가 남아있는 채로) 사이트 루트("/")로
+  // 들어온 경우 — 예: 주소창에 직접 쳐서 들어오거나 새로고침. 아래 STEP_ROUTES/
+  // Routes 어디에도 "/"가 없어서 그냥 두면 "*"에 걸려 무조건 /upload로
+  // 보내버린다(로그인 직후 판단 로직을 안 거침). handleLoggedIn과 똑같은 기준
+  // (기존 플랜 있으면 메인, 없으면 마법사)으로 여기서도 판단해준다.
+  if (location.pathname === "/") {
+    return <RootRedirect userId={userId} />;
   }
 
   // "/main"은 팀 전체 메인페이지 — 마법사 껍데기(스텝바/카드) 없이 MainScreen이
