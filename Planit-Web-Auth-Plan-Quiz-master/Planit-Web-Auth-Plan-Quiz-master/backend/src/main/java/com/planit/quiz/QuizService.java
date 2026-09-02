@@ -34,7 +34,7 @@ import lombok.extern.slf4j.Slf4j;
  * 브라우저는 Firestore 를 직접 건드리지 않는다.
  *
  * Firestore 구조:
- *   quizzes/{quizId}                      { uid, subjectName, todayScope, quizDate, createdAt, questions[] }
+ *   quizzes/{quizId}                      { memberId, subjectName, todayScope, quizDate, createdAt, questions[] }
  *   quizzes/{quizId}/answers/{questionNo} { selectedChoice, correct, answeredAt }
  */
 @Slf4j
@@ -104,7 +104,10 @@ public class QuizService {
 		}
 
 		Map<String, Object> quizDoc = new LinkedHashMap<>();
-		quizDoc.put("uid", uid);
+		// Firestore 문서의 필드 이름은 "memberId"로 통일한다 - study_plan_items 컬렉션도
+		// 같은 Firebase Auth uid 값을 memberId라는 이름으로 저장하는데, 여기만 "uid"라고
+		// 부르고 있어서 이름만 다르고 값은 같은 상황이었다(팀원 요청으로 이름을 맞춤).
+		quizDoc.put("memberId", uid);
 		quizDoc.put("subjectName", "quiz");
 		quizDoc.put("todayScope", plan.scope());
 		quizDoc.put("quizDate", LocalDate.now().toString());
@@ -184,7 +187,7 @@ public class QuizService {
 	/** 계정 탈퇴 시 해당 사용자의 퀴즈 데이터(quizzes 및 answers 서브컬렉션)를 모두 삭제한다. */
 	public void deleteAllForUser(String uid) throws Exception {
 		List<QueryDocumentSnapshot> quizzes =
-			db().collection("quizzes").whereEqualTo("uid", uid).get().get().getDocuments();
+			db().collection("quizzes").whereEqualTo("memberId", uid).get().get().getDocuments();
 		for (QueryDocumentSnapshot quiz : quizzes) {
 			DocumentReference quizRef = quiz.getReference();
 			for (DocumentReference answer : quizRef.collection("answers").listDocuments()) {
@@ -210,7 +213,7 @@ public class QuizService {
 		if (!quizSnap.exists()) {
 			throw ApiException.notFound("퀴즈를 찾을 수 없습니다");
 		}
-		if (!uid.equals(quizSnap.getString("uid"))) {
+		if (!uid.equals(quizSnap.getString("memberId"))) {
 			throw ApiException.forbidden("본인의 퀴즈만 응시할 수 있습니다");
 		}
 	}
