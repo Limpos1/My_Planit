@@ -11,6 +11,7 @@ import { filterParsedToc, rangeMinutes } from "./lib/toc";
 import { s } from "./theme";
 
 const API_BASE = "http://localhost:8000";
+const AUTH_API_BASE = "http://localhost:8081";
 const MAIN_PAGE_URL = "/main";
 const WEEKDAY_KEYS = ["일", "월", "화", "수", "목", "금", "토"];
 
@@ -72,6 +73,31 @@ function AppRoutes() {
   // onLoggedIn(uid)를 호출하는데, 그게 바로 아래 setUserId다 - 그 순간
   // 이 컴포넌트가 다시 렌더링되면서 로그인 게이트를 통과하게 된다.
   const [userId, setUserId] = useState(() => localStorage.getItem("userId"));
+
+  // localStorage에 userId가 남아있다고 해서 실제 로그인 세션이 살아있다는
+  // 보장은 없다 - 서버가 재시작됐거나 세션이 만료됐으면 로그인 서버 입장에선
+  // 이미 로그아웃 상태인데 브라우저만 "로그인된 줄" 착각하는 상황이 생긴다.
+  // 그래서 로그인 백엔드의 GET /api/auth/me로 "이 세션 진짜 살아있어?"를 한 번
+  // 물어보고, 죽어있으면(401) userId를 지워서 로그인 화면으로 돌려보낸다.
+  // 네트워크 오류(서버가 아직 안 켜졌을 때 등)는 세션이 없다고 단정 짓지
+  // 않는다 - 그냥 원래 로그인 상태를 유지한다.
+  const [sessionChecked, setSessionChecked] = useState(false);
+  useEffect(() => {
+    const stored = localStorage.getItem("userId");
+    if (!stored) {
+      setSessionChecked(true);
+      return;
+    }
+    fetch(`${AUTH_API_BASE}/api/auth/me`, { credentials: "include" })
+      .then((res) => {
+        if (!res.ok) {
+          localStorage.removeItem("userId");
+          setUserId(null);
+        }
+      })
+      .catch(() => {})
+      .finally(() => setSessionChecked(true));
+  }, []);
 
   const handleParsed = (data) => {
     setParsedToc(data);
@@ -141,6 +167,13 @@ function AppRoutes() {
       navigate("/upload");
     }
   };
+
+  // 세션 확인이 끝나기 전에는 로그인 화면과 메인 화면 중 뭘 보여줄지
+  // 아직 모른다 - 성급하게 아무거나 그렸다가 확인 끝나고 바뀌면 화면이
+  // 깜빡이므로, 확인 끝날 때까지는 빈 화면만 보여준다(보통 수십 ms 안에 끝남).
+  if (!sessionChecked) {
+    return null;
+  }
 
   // 로그인 안 돼 있으면 어떤 경로로 들어왔든 로그인 화면부터 보여준다
   // (마법사/메인페이지 둘 다 이 아래에서 막힌다).
