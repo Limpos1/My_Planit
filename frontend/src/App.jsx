@@ -103,10 +103,27 @@ function AppRoutes() {
     }
   };
 
+  // 로그인 성공 직후 어디로 보낼지 정한다. 예전엔 무조건 "/upload"(마법사
+  // 처음)로 보내서, 이미 만들어둔 플랜이 Firestore에 그대로 있는데도 로그인할
+  // 때마다 목차 사진부터 새로 찍어야 하는 것처럼 보였다 - 실제로 데이터가
+  // 지워진 게 아니라, 그 플랜이 있는지 확인도 안 하고 매번 마법사 처음으로
+  // 보내버린 것뿐이었다. 그래서 GET /plans/{uid}로 "이 사람 플랜이 이미
+  // 있나?"를 먼저 물어보고, 있으면(200) 바로 메인 캘린더로, 없으면(404,
+  // 첫 로그인) 마법사 처음으로 보낸다.
+  const handleLoggedIn = async (uid) => {
+    setUserId(uid);
+    try {
+      const res = await fetch(`${API_BASE}/plans/${uid}`);
+      navigate(res.ok ? MAIN_PAGE_URL : "/upload");
+    } catch {
+      navigate("/upload");
+    }
+  };
+
   // 로그인 안 돼 있으면 어떤 경로로 들어왔든 로그인 화면부터 보여준다
   // (마법사/메인페이지 둘 다 이 아래에서 막힌다).
   if (!userId) {
-    return <LoginScreen onLoggedIn={(uid) => { setUserId(uid); navigate("/upload"); }} />;
+    return <LoginScreen onLoggedIn={handleLoggedIn} />;
   }
 
   // "/main"은 팀 전체 메인페이지 — 마법사 껍데기(스텝바/카드) 없이 MainScreen이
