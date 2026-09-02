@@ -237,7 +237,7 @@ export default function LoginScreen({ onLoggedIn }) {
           disabled={loading}
           style={{ ...s.btnSecondary, width: "100%", opacity: loading ? 0.6 : 1 }}
         >
-          Google로 계속하기
+          Google로 로그인하기
         </button>
 
         <p style={{ marginTop: 18, fontSize: 13, color: theme.colors.textSoft }}>
