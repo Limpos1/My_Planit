@@ -2,6 +2,8 @@ import { useState } from "react";
 import {
   createUserWithEmailAndPassword,
   signInWithEmailAndPassword,
+  signInWithPopup,
+  GoogleAuthProvider,
   updateProfile,
 } from "firebase/auth";
 import { auth } from "../firebase";
@@ -33,6 +35,13 @@ import { s, theme } from "../theme";
 // =========================================================================
 
 const AUTH_API_BASE = "http://localhost:8081";
+
+// 구글 로그인도 이메일/비밀번호와 흐름은 완전히 똑같다 - 어떤 방식으로
+// idToken을 받았는지는 로그인 서버(AuthController.firebaseLogin)가 아예
+// 신경 쓰지 않는다. 브라우저에서 Firebase로 로그인해서 idToken만 받으면
+// 그 다음부터는 exchangeTokenAndLogin() 하나로 이메일/비밀번호 로그인과
+// 완전히 같은 경로를 탄다.
+const googleProvider = new GoogleAuthProvider();
 
 function authErrorMessage(err) {
   switch (err && err.code) {
@@ -89,6 +98,23 @@ export default function LoginScreen({ onLoggedIn }) {
       await exchangeTokenAndLogin(cred.user);
     } catch (err) {
       setError(authErrorMessage(err) || err.message || "로그인에 실패했습니다.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleGoogleLogin = async () => {
+    setError("");
+    setLoading(true);
+    try {
+      const cred = await signInWithPopup(auth, googleProvider);
+      await exchangeTokenAndLogin(cred.user);
+    } catch (err) {
+      if (err && err.code === "auth/popup-closed-by-user") {
+        // 사용자가 팝업을 그냥 닫은 것 - 에러로 보여줄 필요 없음.
+      } else {
+        setError(authErrorMessage(err) || err.message || "구글 로그인에 실패했습니다.");
+      }
     } finally {
       setLoading(false);
     }
@@ -198,6 +224,21 @@ export default function LoginScreen({ onLoggedIn }) {
             </button>
           </div>
         </form>
+
+        <div style={{ display: "flex", alignItems: "center", gap: 10, margin: "18px 0" }}>
+          <div style={{ flex: 1, height: 1, background: theme.colors.border }} />
+          <span style={{ fontSize: 12, color: theme.colors.textSoft }}>또는</span>
+          <div style={{ flex: 1, height: 1, background: theme.colors.border }} />
+        </div>
+
+        <button
+          type="button"
+          onClick={handleGoogleLogin}
+          disabled={loading}
+          style={{ ...s.btnSecondary, width: "100%", opacity: loading ? 0.6 : 1 }}
+        >
+          Google로 계속하기
+        </button>
 
         <p style={{ marginTop: 18, fontSize: 13, color: theme.colors.textSoft }}>
           {mode === "login" ? (
